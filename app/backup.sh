@@ -1,97 +1,116 @@
 #!/bin/bash
 
-# Backup Unraid State - Docker Edition
-# Backup script for VMs, appdata, and plugins
+# Backup Unraid State - Docker Edition v2.1
+# With folder-level progress and ETA calculations
 
-# Environment variables (set by Docker or Python)
 BACKUP_BASE="${BACKUP_BASE:-/backup}"
 VM_PATH="${VM_PATH:-/domains}"
 APPDATA_PATH="${APPDATA_PATH:-/appdata}"
 PLUGINS_PATH="${PLUGINS_PATH:-/plugins}"
 LOG_FILE="${LOG_FILE:-/config/backup.log}"
 MAX_BACKUPS="${MAX_BACKUPS:-2}"
+COMPRESSION_LEVEL="${COMPRESSION_LEVEL:-6}"
+VERIFY_BACKUPS="${VERIFY_BACKUPS:-1}"
+EXCLUDE_FOLDERS="${EXCLUDE_FOLDERS:-}"
+INCREMENTAL="${INCREMENTAL:-0}"
+PROGRESS_ENABLED="${PROGRESS_ENABLED:-0}"
+INCREMENTAL_FILE="/config/last_backup_time"
 
-# Exclusion patterns for appdata
 EXCLUDE_PATTERNS=(
-    "*/cache/*"
-    "*/Cache/*"
-    "*/logs/*"
-    "*/Logs/*"
-    "*/.cache/*"
-    "*/temp/*"
-    "*/tmp/*"
-    "*.log"
-    "*.tmp"
-    "*Transcode*"
-    "*transcodes*"
+    "*/cache/*" "*/Cache/*" "*/logs/*" "*/Logs/*" "*/.cache/*"
+    "*/temp/*" "*/tmp/*" "*.log" "*.tmp" "*Transcode*" "*transcodes*"
 )
 
-# Get naming based on schedule
-get_backup_tag() {
-    local naming_scheme="${1:-weekly}"
-    local tag=""
-    
-    case "$naming_scheme" in
-        daily)
-            local day_num=$(date +%u)
-            local week_num=$(date +%V)
-            tag="day${day_num}_week$(printf '%02d' $week_num)"
-            ;;
-        weekly)
-            local week_num=$(date +%V)
-            tag="week$(printf '%02d' $week_num)"
-            ;;
-        monthly)
-            tag="$(date +%B_%Y)"
-            ;;
-        *)
-            local week_num=$(date +%V)
-            tag="week$(printf '%02d' $week_num)"
-            ;;
-    esac
-    
-    echo "$tag"
+# Progress with ETA: PROGRESS:percent:phase:eta
+progress() {
+    local percent="$1"
+    local phase="$2"
+    local eta="${3:-}"
+    [ "$PROGRESS_ENABLED" == "1" ] && echo "PROGRESS:${percent}:${phase}:${eta}"
 }
 
-# Logging function
+# Format seconds to Xm Ys
+format_time() {
+    local secs="$1"
+    local mins=$((secs / 60))
+    local remain=$((secs % 60))
+    if [ $mins -gt 0 ]; then
+        echo "${mins}m ${remain}s"
+    else
+        echo "${remain}s"
+    fi
+}
+
+# Calculate ETA: calc_eta elapsed_secs done_units total_units
+calc_eta() {
+    local elapsed="$1"
+    local done="$2"
+    local total="$3"
+    
+    if [ "$done" -gt 0 ] && [ "$done" -lt "$total" ]; then
+        local avg=$((elapsed / done))
+        local remaining=$(((total - done) * avg))
+        format_time $remaining
+    else
+        echo ""
+    fi
+}
+
+get_backup_tag() {
+    local naming_scheme="${1:-weekly}"
+    case "$naming_scheme" in
+        daily) echo "day$(date +%u)_week$(printf '%02d' $(date +%V))" ;;
+        weekly) echo "week$(printf '%02d' $(date +%V))" ;;
+        monthly) echo "$(date +%B_%Y)" ;;
+        *) echo "week$(printf '%02d' $(date +%V))" ;;
+    esac
+}
+
 log() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo "[$timestamp] $1" | tee -a "$LOG_FILE"
 }
 
-# Build exclude arguments for tar
 build_exclude_args() {
     local args=""
     for pattern in "${EXCLUDE_PATTERNS[@]}"; do
         args="$args --exclude=$pattern"
     done
+    if [ -n "$EXCLUDE_FOLDERS" ]; then
+        IFS=',' read -ra FOLDERS <<< "$EXCLUDE_FOLDERS"
+        for folder in "${FOLDERS[@]}"; do
+            [ -n "$folder" ] && args="$args --exclude=./$folder --exclude=$folder"
+        done
+    fi
     echo "$args"
 }
 
-# Cleanup old backups - keep only MAX_BACKUPS newest
+verify_backup() {
+    local backup_file="$1"
+    [ "$VERIFY_BACKUPS" != "1" ] && return 0
+    
+    log "Verifying backup integrity..."
+    if [[ "$backup_file" == *.tar.gz ]]; then
+        gzip -t "$backup_file" 2>/dev/null && log "✓ Verification PASSED" && return 0
+    elif [[ "$backup_file" == *.tar ]]; then
+        tar -tf "$backup_file" >/dev/null 2>&1 && log "✓ Verification PASSED" && return 0
+    fi
+    log "✗ Verification FAILED"
+    return 1
+}
+
 cleanup_old_backups() {
     local pattern="$1"
     local backup_dir="$2"
-    
-    log "Cleaning up old backups matching: $pattern in $backup_dir"
-    
-    if [ ! -d "$backup_dir" ]; then
-        return
-    fi
-    
+    [ ! -d "$backup_dir" ] && return
     cd "$backup_dir" || return
-    
-    # List files matching pattern, sorted by time (newest first), skip first MAX_BACKUPS
     ls -t $pattern 2>/dev/null | tail -n +$((MAX_BACKUPS + 1)) | while read file; do
-        log "Deleting old backup: $file"
-        rm -f "$file"
-        # Also remove metadata file if exists
-        rm -f "${file%.tar.gz}.metadata.json" 2>/dev/null
-        rm -f "${file%.tar}.metadata.json" 2>/dev/null
+        log "Removing old: $file"
+        rm -f "$file" "${file%.tar.gz}.metadata.json" "${file%.tar}.metadata.json" 2>/dev/null
     done
 }
 
-# VM Backup Function
+# ============== VM BACKUP ==============
 backup_vm() {
     local VM_NAME="$1"
     local VM_HANDLING="$2"
@@ -99,520 +118,441 @@ backup_vm() {
     local NAMING_SCHEME="${4:-weekly}"
     
     BACKUP_TAG=$(get_backup_tag "$NAMING_SCHEME")
+    START_TIME=$(date +%s)
+    TOTAL_PHASES=6
+    CURRENT_PHASE=0
+    
+    progress 0 "Initializing VM backup" ""
     
     log "=========================================="
     log "Starting VM backup: $VM_NAME"
-    log "Naming: $BACKUP_TAG (scheme: $NAMING_SCHEME)"
-    log "Handling: $VM_HANDLING"
-    log "Compress: $COMPRESS"
     log "=========================================="
     
     mkdir -p "$BACKUP_BASE/vms"
     
-    if [ "$COMPRESS" == "1" ]; then
-        BACKUP_FILE="$BACKUP_BASE/vms/${VM_NAME}_${BACKUP_TAG}.tar.gz"
-    else
-        BACKUP_FILE="$BACKUP_BASE/vms/${VM_NAME}_${BACKUP_TAG}.tar"
-    fi
+    [ "$COMPRESS" == "1" ] && BACKUP_FILE="$BACKUP_BASE/vms/${VM_NAME}_${BACKUP_TAG}.tar.gz" || BACKUP_FILE="$BACKUP_BASE/vms/${VM_NAME}_${BACKUP_TAG}.tar"
     
-    METADATA_FILE="${BACKUP_FILE%.tar.gz}.metadata.json"
-    [ "$COMPRESS" == "0" ] && METADATA_FILE="${BACKUP_FILE%.tar}.metadata.json"
+    # Phase 1: Check VM
+    CURRENT_PHASE=1
+    PHASE_PERCENT=$((CURRENT_PHASE * 100 / TOTAL_PHASES))
+    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
+    progress $PHASE_PERCENT "Checking VM status" "$ETA"
     
-    # Check if VM exists
     if ! virsh dominfo "$VM_NAME" &>/dev/null; then
         log "ERROR: VM '$VM_NAME' not found"
+        progress 100 "Error: VM not found" ""
         return 1
     fi
     
     VM_STATE=$(virsh domstate "$VM_NAME" 2>/dev/null)
-    log "VM current state: $VM_STATE"
+    log "VM state: $VM_STATE"
     
-    # Get VM disk path (this returns the HOST path from libvirt)
+    # Phase 2: Get disk info
+    CURRENT_PHASE=2
+    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
+    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Getting VM disk info" "$ETA"
+    
     VM_DISK_HOST=$(virsh domblklist "$VM_NAME" | grep -E 'vd|hd|sd' | awk '{print $2}' | head -1)
-    if [ -z "$VM_DISK_HOST" ]; then
-        log "ERROR: Could not find VM disk"
-        return 1
-    fi
-    
-    log "VM disk (host path): $VM_DISK_HOST"
-    
-    # Translate host path to container path
-    # /mnt/user/domains -> /domains (as mounted in docker-compose)
     VM_DISK=$(echo "$VM_DISK_HOST" | sed 's|/mnt/user/domains|/domains|')
     
-    log "VM disk (container path): $VM_DISK"
-    
-    # Verify the path exists inside the container
     if [ ! -f "$VM_DISK" ]; then
-        log "ERROR: VM disk not accessible at container path: $VM_DISK"
-        log "Make sure /mnt/user/domains is mounted to /domains in docker-compose.yml"
+        log "ERROR: VM disk not accessible: $VM_DISK"
+        progress 100 "Error: Disk not accessible" ""
         return 1
     fi
     
-    # Get VM XML config
     VM_XML=$(virsh dumpxml "$VM_NAME" 2>/dev/null)
-    if [ -z "$VM_XML" ]; then
-        log "ERROR: Could not get VM configuration"
-        return 1
-    fi
     
-    # Save metadata (use HOST path for restore purposes)
-    cat > "$METADATA_FILE" << METADATA_EOF
-{
-    "backup_type": "vm",
-    "vm_name": "$VM_NAME",
-    "vm_disk_path": "$VM_DISK_HOST",
-    "vm_disk_dir": "$(dirname "$VM_DISK_HOST")",
-    "vm_disk_name": "$(basename "$VM_DISK_HOST")",
-    "backup_date": "$(date -Iseconds)",
-    "backup_tag": "$BACKUP_TAG",
-    "naming_scheme": "$NAMING_SCHEME",
-    "compressed": $COMPRESS,
-    "original_state": "$VM_STATE",
-    "vm_xml_config": $(echo "$VM_XML" | jq -Rs .)
-}
-METADATA_EOF
+    # Save metadata
+    METADATA_FILE="${BACKUP_FILE%.tar.gz}.metadata.json"
+    [ "$COMPRESS" == "0" ] && METADATA_FILE="${BACKUP_FILE%.tar}.metadata.json"
+    cat > "$METADATA_FILE" << EOF
+{"backup_type":"vm","vm_name":"$VM_NAME","vm_disk_path":"$VM_DISK_HOST","backup_date":"$(date -Iseconds)","backup_tag":"$BACKUP_TAG","compressed":$COMPRESS,"original_state":"$VM_STATE"}
+EOF
     
-    log "Metadata saved to: $METADATA_FILE"
-    
-    # Handle VM state
+    # Phase 3: Stop VM if needed
+    CURRENT_PHASE=3
     NEED_RESTART=false
-    if [ "$VM_HANDLING" == "stop" ]; then
-        if [ "$VM_STATE" == "running" ]; then
-            log "Shutting down VM..."
-            virsh shutdown "$VM_NAME"
-            NEED_RESTART=true
-            
-            # Wait for shutdown
-            for i in {1..60}; do
-                sleep 1
-                VM_STATE=$(virsh domstate "$VM_NAME" 2>/dev/null)
-                if [ "$VM_STATE" == "shut off" ]; then
-                    log "VM shut down successfully"
-                    break
-                fi
-            done
-            
-            # Force if needed
-            if [ "$VM_STATE" != "shut off" ]; then
-                log "VM did not shut down gracefully, forcing off..."
-                virsh destroy "$VM_NAME"
-                sleep 2
-            fi
-        fi
+    if [ "$VM_HANDLING" == "stop" ] && [ "$VM_STATE" == "running" ]; then
+        ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
+        progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Shutting down VM" "$ETA"
+        log "Shutting down VM..."
+        virsh shutdown "$VM_NAME"
+        NEED_RESTART=true
+        
+        for i in {1..60}; do
+            sleep 1
+            VM_STATE=$(virsh domstate "$VM_NAME" 2>/dev/null)
+            [ "$VM_STATE" == "shut off" ] && break
+        done
+        
+        [ "$VM_STATE" != "shut off" ] && virsh destroy "$VM_NAME" && sleep 2
+        log "VM stopped"
     fi
     
-    # Create backup
-    log "Creating backup..."
-    START_TIME=$(date +%s)
+    # Phase 4: Create archive
+    CURRENT_PHASE=4
+    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
+    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Creating backup archive" "$ETA"
+    log "Creating backup archive..."
     
     if [ "$COMPRESS" == "1" ]; then
-        tar -czf "$BACKUP_FILE" -C "$(dirname "$VM_DISK")" "$(basename "$VM_DISK")" 2>&1 | while read line; do
-            log "$line"
-        done
+        tar -I "gzip -$COMPRESSION_LEVEL" -cf "$BACKUP_FILE" -C "$(dirname "$VM_DISK")" "$(basename "$VM_DISK")" 2>&1
     else
-        tar -cf "$BACKUP_FILE" -C "$(dirname "$VM_DISK")" "$(basename "$VM_DISK")" 2>&1 | while read line; do
-            log "$line"
-        done
+        tar -cf "$BACKUP_FILE" -C "$(dirname "$VM_DISK")" "$(basename "$VM_DISK")" 2>&1
     fi
     
-    END_TIME=$(date +%s)
-    DURATION=$((END_TIME - START_TIME))
-    
     BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+    log "Archive created: $BACKUP_SIZE"
     
-    log "Backup completed: $BACKUP_FILE"
-    log "Size: $BACKUP_SIZE"
-    log "Duration: ${DURATION} seconds"
+    # Phase 5: Verify
+    CURRENT_PHASE=5
+    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
+    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Verifying backup ($BACKUP_SIZE)" "$ETA"
+    verify_backup "$BACKUP_FILE"
     
     # Restart VM if needed
     if [ "$NEED_RESTART" == "true" ]; then
         log "Restarting VM..."
         virsh start "$VM_NAME"
-        log "VM restarted"
     fi
     
-    # Cleanup old backups
+    # Phase 6: Cleanup
+    CURRENT_PHASE=6
+    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Cleaning up" ""
     cleanup_old_backups "${VM_NAME}_*.tar*" "$BACKUP_BASE/vms"
     
-    log "VM backup finished successfully"
+    DURATION=$(($(date +%s) - START_TIME))
+    progress 100 "Complete in $(format_time $DURATION)" ""
+    log "VM backup completed in $(format_time $DURATION)"
 }
 
-# Appdata Backup Function  
+# ============== APPDATA BACKUP ==============
 backup_appdata() {
     local BACKUP_TYPE="$1"
     shift
     
     local NAMING_SCHEME="weekly"
-    local FOLDERS=()
+    local CUSTOM_FOLDERS=()
     
-    # Parse arguments
     for arg in "$@"; do
         if [[ "$arg" == "daily" || "$arg" == "weekly" || "$arg" == "monthly" ]]; then
             NAMING_SCHEME="$arg"
         else
-            FOLDERS+=("$arg")
+            CUSTOM_FOLDERS+=("$arg")
         fi
     done
     
     BACKUP_TAG=$(get_backup_tag "$NAMING_SCHEME")
     EXCLUDE_ARGS=$(build_exclude_args)
+    START_TIME=$(date +%s)
+    
+    progress 0 "Initializing appdata backup" ""
     
     log "=========================================="
     log "Starting appdata backup"
-    log "Naming: $BACKUP_TAG (scheme: $NAMING_SCHEME)"
-    log "Type: $BACKUP_TYPE"
     log "=========================================="
     
     mkdir -p "$BACKUP_BASE/appdata"
     
     if [ "$BACKUP_TYPE" == "all" ]; then
-        # FULL BACKUP - Single combined archive
-        BACKUP_FILE="$BACKUP_BASE/appdata/appdata_FULL_${BACKUP_TAG}.tar.gz"
+        # Get all folders
+        mapfile -t ALL_FOLDERS < <(find "$APPDATA_PATH" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort)
+        TOTAL_FOLDERS=${#ALL_FOLDERS[@]}
+        
+        [ "$INCREMENTAL" == "1" ] && BACKUP_FILE="$BACKUP_BASE/appdata/appdata_INCREMENTAL_${BACKUP_TAG}.tar.gz" || BACKUP_FILE="$BACKUP_BASE/appdata/appdata_FULL_${BACKUP_TAG}.tar.gz"
+        
+        progress 2 "Found $TOTAL_FOLDERS folders" ""
+        log "Found $TOTAL_FOLDERS folders to backup"
+        
+        # Save metadata
         METADATA_FILE="${BACKUP_FILE%.tar.gz}.metadata.json"
+        echo "{\"backup_type\":\"appdata_full\",\"folders\":$TOTAL_FOLDERS,\"backup_date\":\"$(date -Iseconds)\",\"backup_tag\":\"$BACKUP_TAG\"}" > "$METADATA_FILE"
         
-        # Get list of all folders
-        ALL_FOLDERS=$(find "$APPDATA_PATH" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | jq -R . | jq -s .)
+        # Remove old file
+        rm -f "$BACKUP_FILE"
         
-        cat > "$METADATA_FILE" << METADATA_EOF
-{
-    "backup_type": "appdata_full",
-    "backup_mode": "all",
-    "appdata_path": "$APPDATA_PATH",
-    "folders": $ALL_FOLDERS,
-    "backup_date": "$(date -Iseconds)",
-    "backup_tag": "$BACKUP_TAG",
-    "naming_scheme": "$NAMING_SCHEME",
-    "compressed": true
-}
-METADATA_EOF
-        
-        log "Metadata saved to: $METADATA_FILE"
-        log "Creating FULL appdata backup..."
-        
-        START_TIME=$(date +%s)
-        
-        eval tar -czf "$BACKUP_FILE" $EXCLUDE_ARGS -C "$APPDATA_PATH" . 2>&1 | while read line; do
-            log "$line"
+        # Backup each folder and append to archive
+        CURRENT=0
+        for FOLDER in "${ALL_FOLDERS[@]}"; do
+            CURRENT=$((CURRENT + 1))
+            
+            # Calculate progress (5-90%)
+            PERCENT=$((5 + (CURRENT * 85 / TOTAL_FOLDERS)))
+            
+            # Calculate ETA
+            ELAPSED=$(($(date +%s) - START_TIME))
+            ETA=$(calc_eta $ELAPSED $CURRENT $TOTAL_FOLDERS)
+            
+            progress $PERCENT "Backing up: $FOLDER ($CURRENT/$TOTAL_FOLDERS)" "$ETA"
+            log "[$CURRENT/$TOTAL_FOLDERS] Backing up: $FOLDER"
+            
+            # Append to tar (create on first, append on rest)
+            if [ $CURRENT -eq 1 ]; then
+                eval tar -cf "$BACKUP_FILE.tmp" $EXCLUDE_ARGS -C "$APPDATA_PATH" "$FOLDER" 2>/dev/null
+            else
+                eval tar -rf "$BACKUP_FILE.tmp" $EXCLUDE_ARGS -C "$APPDATA_PATH" "$FOLDER" 2>/dev/null
+            fi
         done
         
-        END_TIME=$(date +%s)
-        DURATION=$((END_TIME - START_TIME))
-        BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+        # Compress the final tar
+        progress 92 "Compressing archive" ""
+        log "Compressing archive..."
+        gzip -$COMPRESSION_LEVEL "$BACKUP_FILE.tmp"
+        mv "$BACKUP_FILE.tmp.gz" "$BACKUP_FILE"
         
-        log "FULL backup completed: $BACKUP_FILE"
-        log "Size: $BACKUP_SIZE"
-        log "Duration: ${DURATION} seconds"
+        BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+        log "Archive created: $BACKUP_SIZE"
+        
+        # Verify
+        progress 95 "Verifying ($BACKUP_SIZE)" ""
+        verify_backup "$BACKUP_FILE"
         
         # Cleanup
+        progress 98 "Cleaning up" ""
         cleanup_old_backups "appdata_FULL_*.tar.gz" "$BACKUP_BASE/appdata"
+        cleanup_old_backups "appdata_INCREMENTAL_*.tar.gz" "$BACKUP_BASE/appdata"
         
     else
-        # INDIVIDUAL BACKUPS
-        log "Creating INDIVIDUAL backups for ${#FOLDERS[@]} folders..."
+        # Custom folder backup
+        TOTAL_FOLDERS=${#CUSTOM_FOLDERS[@]}
+        CURRENT=0
         
-        for FOLDER in "${FOLDERS[@]}"; do
-            log "Backing up: $FOLDER"
+        for FOLDER in "${CUSTOM_FOLDERS[@]}"; do
+            CURRENT=$((CURRENT + 1))
+            PERCENT=$((CURRENT * 95 / TOTAL_FOLDERS))
+            ELAPSED=$(($(date +%s) - START_TIME))
+            ETA=$(calc_eta $ELAPSED $CURRENT $TOTAL_FOLDERS)
+            
+            progress $PERCENT "Backing up: $FOLDER ($CURRENT/$TOTAL_FOLDERS)" "$ETA"
+            log "[$CURRENT/$TOTAL_FOLDERS] Backing up: $FOLDER"
             
             BACKUP_FILE="$BACKUP_BASE/appdata/containers/${FOLDER}/${FOLDER}_${BACKUP_TAG}.tar.gz"
-            METADATA_FILE="${BACKUP_FILE%.tar.gz}.metadata.json"
             mkdir -p "$(dirname "$BACKUP_FILE")"
             
-            if [ ! -d "$APPDATA_PATH/$FOLDER" ]; then
-                log "WARNING: Folder not found: $FOLDER (skipping)"
-                continue
-            fi
-            
-            cat > "$METADATA_FILE" << METADATA_EOF
-{
-    "backup_type": "appdata_individual",
-    "backup_mode": "custom",
-    "appdata_path": "$APPDATA_PATH",
-    "folder": "$FOLDER",
-    "backup_date": "$(date -Iseconds)",
-    "backup_tag": "$BACKUP_TAG",
-    "naming_scheme": "$NAMING_SCHEME",
-    "compressed": true
-}
-METADATA_EOF
-            
-            START_TIME=$(date +%s)
-            
-            eval tar -czf "$BACKUP_FILE" $EXCLUDE_ARGS -C "$APPDATA_PATH" "$FOLDER" 2>&1 | while read line; do
-                log "$line"
-            done
-            
-            END_TIME=$(date +%s)
-            DURATION=$((END_TIME - START_TIME))
-            BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-            
-            log "✓ Completed: $FOLDER ($BACKUP_SIZE, ${DURATION}s)"
+            [ -d "$APPDATA_PATH/$FOLDER" ] && eval tar -czf "$BACKUP_FILE" $EXCLUDE_ARGS -C "$APPDATA_PATH" "$FOLDER" 2>/dev/null
             
             cleanup_old_backups "${FOLDER}_*.tar.gz" "$BACKUP_BASE/appdata/containers/${FOLDER}"
         done
-        
-        log "All individual backups completed"
     fi
     
-    log "Appdata backup finished successfully"
+    DURATION=$(($(date +%s) - START_TIME))
+    progress 100 "Complete in $(format_time $DURATION)" ""
+    log "Appdata backup completed in $(format_time $DURATION)"
 }
 
-# Plugins Backup Function
+# ============== PLUGINS BACKUP ==============
 backup_plugins() {
     local NAMING_SCHEME="${1:-weekly}"
+    
     BACKUP_TAG=$(get_backup_tag "$NAMING_SCHEME")
+    START_TIME=$(date +%s)
+    
+    progress 0 "Initializing plugins backup" ""
     
     log "=========================================="
     log "Starting plugins backup"
-    log "Naming: $BACKUP_TAG (scheme: $NAMING_SCHEME)"
     log "=========================================="
     
     mkdir -p "$BACKUP_BASE/plugins"
-    
     BACKUP_FILE="$BACKUP_BASE/plugins/plugins_${BACKUP_TAG}.tar.gz"
     
-    if [ ! -d "$PLUGINS_PATH" ]; then
-        log "ERROR: Plugins path not found: $PLUGINS_PATH"
-        return 1
-    fi
+    # Get plugin folders
+    mapfile -t PLUGIN_FOLDERS < <(find "$PLUGINS_PATH" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort)
+    TOTAL=${#PLUGIN_FOLDERS[@]}
     
-    log "Backing up plugin configs from $PLUGINS_PATH"
+    progress 5 "Found $TOTAL plugin configs" ""
+    log "Found $TOTAL plugin configurations"
     
-    START_TIME=$(date +%s)
+    # Remove old file
+    rm -f "$BACKUP_FILE" "$BACKUP_FILE.tmp"
     
-    tar -czf "$BACKUP_FILE" -C "$(dirname "$PLUGINS_PATH")" "$(basename "$PLUGINS_PATH")" 2>&1 | while read line; do
-        log "$line"
+    # Backup each plugin folder
+    CURRENT=0
+    for PLUGIN in "${PLUGIN_FOLDERS[@]}"; do
+        CURRENT=$((CURRENT + 1))
+        PERCENT=$((5 + (CURRENT * 80 / TOTAL)))
+        ELAPSED=$(($(date +%s) - START_TIME))
+        ETA=$(calc_eta $ELAPSED $CURRENT $TOTAL)
+        
+        progress $PERCENT "Backing up: $PLUGIN ($CURRENT/$TOTAL)" "$ETA"
+        log "[$CURRENT/$TOTAL] Backing up: $PLUGIN"
+        
+        if [ $CURRENT -eq 1 ]; then
+            tar -cf "$BACKUP_FILE.tmp" -C "$PLUGINS_PATH" "$PLUGIN" 2>/dev/null
+        else
+            tar -rf "$BACKUP_FILE.tmp" -C "$PLUGINS_PATH" "$PLUGIN" 2>/dev/null
+        fi
     done
     
-    if [ $? -eq 0 ]; then
-        END_TIME=$(date +%s)
-        DURATION=$((END_TIME - START_TIME))
-        BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-        
-        log "Plugin backup completed: $BACKUP_FILE"
-        log "Size: $BACKUP_SIZE"
-        log "Duration: ${DURATION} seconds"
-        
-        # Cleanup
-        cleanup_old_backups "plugins_*.tar.gz" "$BACKUP_BASE/plugins"
-    else
-        log "ERROR: Plugin backup failed"
-        return 1
-    fi
+    # Also get loose files in plugins directory
+    tar -rf "$BACKUP_FILE.tmp" -C "$PLUGINS_PATH" --exclude='*/' . 2>/dev/null || true
     
-    log "Plugin backup finished successfully"
+    # Compress
+    progress 90 "Compressing archive" ""
+    gzip -$COMPRESSION_LEVEL "$BACKUP_FILE.tmp"
+    mv "$BACKUP_FILE.tmp.gz" "$BACKUP_FILE"
+    
+    BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+    log "Archive created: $BACKUP_SIZE"
+    
+    progress 95 "Verifying ($BACKUP_SIZE)" ""
+    verify_backup "$BACKUP_FILE"
+    
+    progress 98 "Cleaning up" ""
+    cleanup_old_backups "plugins_*.tar.gz" "$BACKUP_BASE/plugins"
+    
+    DURATION=$(($(date +%s) - START_TIME))
+    progress 100 "Complete in $(format_time $DURATION)" ""
+    log "Plugins backup completed in $(format_time $DURATION)"
 }
 
-# Flash/USB Backup Function - CRITICAL for disaster recovery
+# ============== FLASH BACKUP ==============
 backup_flash() {
     local NAMING_SCHEME="${1:-weekly}"
+    
     BACKUP_TAG=$(get_backup_tag "$NAMING_SCHEME")
+    START_TIME=$(date +%s)
+    TOTAL_PHASES=5
+    CURRENT_PHASE=0
+    
+    progress 0 "Initializing flash backup" ""
     
     log "=========================================="
-    log "Starting FLASH DRIVE backup (Disaster Recovery)"
-    log "Naming: $BACKUP_TAG (scheme: $NAMING_SCHEME)"
+    log "Starting FLASH backup (Disaster Recovery)"
     log "=========================================="
     
-    mkdir -p "$BACKUP_BASE/flash"
-    
-    BACKUP_FILE="$BACKUP_BASE/flash/flash_config_${BACKUP_TAG}.tar.gz"
-    METADATA_FILE="${BACKUP_FILE%.tar.gz}.metadata.json"
-    
-    FLASH_PATH="${FLASH_PATH:-/boot}"
+    FLASH_PATH="/boot"
     
     if [ ! -d "$FLASH_PATH/config" ]; then
-        log "ERROR: Flash config path not found: $FLASH_PATH/config"
+        log "ERROR: Flash drive not accessible"
+        progress 100 "Error: Flash not accessible" ""
         return 1
     fi
     
-    # Catalog what we're backing up
-    log "Cataloging flash contents..."
+    mkdir -p "$BACKUP_BASE/flash"
+    BACKUP_FILE="$BACKUP_BASE/flash/flash_config_${BACKUP_TAG}.tar.gz"
     
-    # Check for important files
-    local has_super="false"
-    local has_license="false"
-    local has_network="false"
-    local has_shares="false"
-    local has_docker="false"
-    local has_vms="false"
-    local has_users="false"
-    local has_ssl="false"
-    local has_wireguard="false"
+    # Phase 1: Scan
+    CURRENT_PHASE=1
+    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
+    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Scanning flash drive" "$ETA"
     
-    [ -f "$FLASH_PATH/config/super.dat" ] && has_super="true"
-    [ -f "$FLASH_PATH/*.key" ] 2>/dev/null && has_license="true"
-    ls "$FLASH_PATH/"*.key &>/dev/null && has_license="true"
-    [ -f "$FLASH_PATH/config/network.cfg" ] && has_network="true"
-    [ -d "$FLASH_PATH/config/shares" ] && has_shares="true"
-    [ -f "$FLASH_PATH/config/docker.cfg" ] && has_docker="true"
-    [ -d "$FLASH_PATH/config/libvirt" ] && has_vms="true"
-    [ -f "$FLASH_PATH/config/passwd" ] && has_users="true"
-    [ -d "$FLASH_PATH/config/ssl" ] && has_ssl="true"
-    [ -d "$FLASH_PATH/config/wireguard" ] && has_wireguard="true"
+    # Get key directories
+    mapfile -t FLASH_DIRS < <(find "$FLASH_PATH" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null)
+    TOTAL_ITEMS=${#FLASH_DIRS[@]}
+    log "Found $TOTAL_ITEMS directories on flash"
     
-    # Create metadata
-    cat > "$METADATA_FILE" << METADATA_EOF
-{
-    "backup_type": "flash",
-    "flash_path": "$FLASH_PATH",
-    "backup_date": "$(date -Iseconds)",
-    "backup_tag": "$BACKUP_TAG",
-    "naming_scheme": "$NAMING_SCHEME",
-    "compressed": true,
-    "contents": {
-        "array_config": $has_super,
-        "license_key": $has_license,
-        "network_config": $has_network,
-        "share_config": $has_shares,
-        "docker_config": $has_docker,
-        "vm_config": $has_vms,
-        "user_accounts": $has_users,
-        "ssl_certs": $has_ssl,
-        "wireguard_vpn": $has_wireguard
-    },
-    "restore_notes": "To restore: Copy contents to new USB flash drive /boot/ directory. License may need reactivation if USB GUID changes."
-}
-METADATA_EOF
+    # Phase 2: Create archive
+    CURRENT_PHASE=2
+    rm -f "$BACKUP_FILE" "$BACKUP_FILE.tmp"
     
-    log "Metadata saved to: $METADATA_FILE"
-    log ""
-    log "Backup will include:"
-    [ "$has_super" == "true" ] && log "  ✓ Array configuration (super.dat)"
-    [ "$has_license" == "true" ] && log "  ✓ License key"
-    [ "$has_network" == "true" ] && log "  ✓ Network configuration"
-    [ "$has_shares" == "true" ] && log "  ✓ Share definitions"
-    [ "$has_docker" == "true" ] && log "  ✓ Docker settings"
-    [ "$has_vms" == "true" ] && log "  ✓ VM/Libvirt configuration"
-    [ "$has_users" == "true" ] && log "  ✓ User accounts"
-    [ "$has_ssl" == "true" ] && log "  ✓ SSL certificates"
-    [ "$has_wireguard" == "true" ] && log "  ✓ WireGuard VPN config"
-    log ""
-    
-    log "Creating flash backup..."
-    START_TIME=$(date +%s)
-    
-    # Backup the entire /boot except for large unnecessary files
-    # We INCLUDE plugins folder here since it has configs, but exclude the actual plugin packages
-    tar -czf "$BACKUP_FILE" \
-        --exclude="*.txz" \
-        --exclude="*.zip" \
-        --exclude="previous/" \
-        --exclude="bz*" \
-        --exclude="logs/" \
-        -C "$(dirname "$FLASH_PATH")" "$(basename "$FLASH_PATH")" 2>&1 | while read line; do
-        log "$line"
+    ITEM_NUM=0
+    for DIR in "${FLASH_DIRS[@]}"; do
+        ITEM_NUM=$((ITEM_NUM + 1))
+        SUB_PERCENT=$((20 + (ITEM_NUM * 50 / TOTAL_ITEMS)))
+        ELAPSED=$(($(date +%s) - START_TIME))
+        ETA=$(calc_eta $ELAPSED $((CURRENT_PHASE * 10 + ITEM_NUM)) $((TOTAL_PHASES * 10 + TOTAL_ITEMS)))
+        
+        progress $SUB_PERCENT "Archiving: $DIR" "$ETA"
+        log "Archiving: $DIR"
+        
+        if [ $ITEM_NUM -eq 1 ]; then
+            tar -cf "$BACKUP_FILE.tmp" --exclude='*.tmp' --exclude='logs/*' -C "$FLASH_PATH" "$DIR" 2>/dev/null
+        else
+            tar -rf "$BACKUP_FILE.tmp" --exclude='*.tmp' --exclude='logs/*' -C "$FLASH_PATH" "$DIR" 2>/dev/null
+        fi
     done
     
-    END_TIME=$(date +%s)
-    DURATION=$((END_TIME - START_TIME))
+    # Add root files
+    tar -rf "$BACKUP_FILE.tmp" -C "$FLASH_PATH" --exclude='*/' . 2>/dev/null || true
+    
+    # Phase 3: Compress
+    CURRENT_PHASE=3
+    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
+    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Compressing archive" "$ETA"
+    log "Compressing..."
+    
+    gzip -$COMPRESSION_LEVEL "$BACKUP_FILE.tmp"
+    mv "$BACKUP_FILE.tmp.gz" "$BACKUP_FILE"
+    
     BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+    log "Archive created: $BACKUP_SIZE"
     
-    log ""
-    log "Flash backup completed: $BACKUP_FILE"
-    log "Size: $BACKUP_SIZE"
-    log "Duration: ${DURATION} seconds"
+    # Phase 4: Verify
+    CURRENT_PHASE=4
+    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
+    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Verifying ($BACKUP_SIZE)" "$ETA"
+    verify_backup "$BACKUP_FILE"
     
-    # Create README with restore instructions
-    README_FILE="$BACKUP_BASE/flash/RESTORE_INSTRUCTIONS.txt"
-    cat > "$README_FILE" << 'README_EOF'
-==========================================
-FLASH BACKUP - RESTORE INSTRUCTIONS
-==========================================
-
-This backup contains your complete Unraid USB flash drive configuration.
-
-WHAT'S INCLUDED:
-- Array configuration (disk assignments, parity)
-- Network settings
-- User accounts & passwords
-- Share definitions
-- Docker & VM settings
-- SSL certificates
-- Plugin configurations
-- License key
-
-HOW TO RESTORE:
-==========================================
-
-1. CREATE NEW UNRAID USB
-   - Download Unraid USB Creator from unraid.net
-   - Create a fresh Unraid USB drive
-   - Boot once to initialize (optional)
-
-2. EXTRACT THIS BACKUP
-   - Mount the USB drive on a computer
-   - Extract the .tar.gz backup file
-   - Copy contents to the USB /boot directory
-   - Overwrite existing files when prompted
-
-3. REACTIVATE LICENSE (if needed)
-   - If the new USB has a different GUID than original
-   - Go to unraid.net -> My Servers
-   - Transfer your license to the new USB GUID
-
-4. BOOT AND VERIFY
-   - Insert USB into server and boot
-   - Array configuration should be intact
-   - Start array and verify all disks are recognized
-
-IMPORTANT NOTES:
-==========================================
-- This backup does NOT include your actual data (array contents)
-- This backup does NOT include Docker container data (appdata)
-- This backup does NOT include VM disk images
-- Those should be backed up separately
-
-For full disaster recovery, you need:
-1. This flash backup (USB configuration)
-2. Appdata backup (Docker container data)  
-3. VM backups (if applicable)
-4. Your actual array data (parity protected or separate backup)
-
-==========================================
-Backup created by: Backup Unraid State
-==========================================
-README_EOF
-    
-    log "Created restore instructions: $README_FILE"
-    
-    # Cleanup old backups
+    # Phase 5: Cleanup
+    CURRENT_PHASE=5
+    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Cleaning up" ""
     cleanup_old_backups "flash_config_*.tar.gz" "$BACKUP_BASE/flash"
     
-    log ""
-    log "=========================================="
-    log "IMPORTANT RESTORE INSTRUCTIONS:"
-    log "=========================================="
-    log "1. Create new Unraid USB using USB Creator"
-    log "2. Extract this backup to the USB /boot directory"
-    log "3. If USB GUID changed, reactivate license at unraid.net"
-    log "4. Boot from new USB - array should be intact"
-    log "=========================================="
-    log ""
-    log "Flash backup finished successfully"
+    # Create restore instructions
+    cat > "$BACKUP_BASE/flash/RESTORE_INSTRUCTIONS.txt" << 'EOF'
+FLASH BACKUP - RESTORE INSTRUCTIONS
+====================================
+1. Create new Unraid USB with USB Creator
+2. Extract this backup to USB /boot directory
+3. Transfer license at unraid.net if USB GUID changed
+4. Boot and verify array configuration
+EOF
+    
+    DURATION=$(($(date +%s) - START_TIME))
+    progress 100 "Complete in $(format_time $DURATION)" ""
+    log "Flash backup completed in $(format_time $DURATION)"
 }
 
-# Main script logic
+# ============== RESTORE FUNCTIONS ==============
+restore_vm() {
+    local BACKUP_FILE="$1"
+    local TARGET_VM_NAME="$2"
+    
+    log "Starting VM restore from: $BACKUP_FILE"
+    [ ! -f "$BACKUP_FILE" ] && log "ERROR: File not found" && return 1
+    
+    METADATA_FILE="${BACKUP_FILE%.tar.gz}.metadata.json"
+    [ -f "$METADATA_FILE" ] && VM_DISK_DIR=$(jq -r '.vm_disk_dir // "/mnt/user/domains"' "$METADATA_FILE")
+    RESTORE_DIR=$(echo "${VM_DISK_DIR:-/mnt/user/domains}" | sed 's|/mnt/user/domains|/domains|')
+    
+    mkdir -p "$RESTORE_DIR"
+    log "Extracting to: $RESTORE_DIR"
+    
+    [[ "$BACKUP_FILE" == *.tar.gz ]] && tar -xzf "$BACKUP_FILE" -C "$RESTORE_DIR" || tar -xf "$BACKUP_FILE" -C "$RESTORE_DIR"
+    
+    log "VM restore complete"
+}
+
+restore_appdata() {
+    local BACKUP_FILE="$1"
+    log "Starting appdata restore from: $BACKUP_FILE"
+    [ ! -f "$BACKUP_FILE" ] && log "ERROR: File not found" && return 1
+    
+    log "Extracting to: $APPDATA_PATH"
+    tar -xzf "$BACKUP_FILE" -C "$APPDATA_PATH"
+    log "Appdata restore complete"
+}
+
+restore_plugins() {
+    local BACKUP_FILE="$1"
+    log "Starting plugins restore from: $BACKUP_FILE"
+    [ ! -f "$BACKUP_FILE" ] && log "ERROR: File not found" && return 1
+    
+    log "Extracting to: /boot/config"
+    tar -xzf "$BACKUP_FILE" -C "/boot/config"
+    log "Plugins restore complete"
+}
+
+# ============== MAIN ==============
 case "$1" in
-    backup_vm)
-        backup_vm "$2" "$3" "$4" "$5"
-        ;;
-    backup_appdata)
-        backup_appdata "$2" "${@:3}"
-        ;;
-    backup_plugins)
-        backup_plugins "$2"
-        ;;
-    backup_flash)
-        backup_flash "$2"
-        ;;
-    *)
-        echo "Backup Unraid State - Docker Edition"
-        echo ""
-        echo "Usage:"
-        echo "  $0 backup_vm <vmname> <stop|live> <compress: 0|1> [daily|weekly|monthly]"
-        echo "  $0 backup_appdata <all|custom> [folder_list] [daily|weekly|monthly]"
-        echo "  $0 backup_plugins [daily|weekly|monthly]"
-        echo "  $0 backup_flash [daily|weekly|monthly]"
-        exit 1
-        ;;
+    backup_vm) backup_vm "$2" "$3" "$4" "$5" ;;
+    backup_appdata) backup_appdata "$2" "${@:3}" ;;
+    backup_plugins) backup_plugins "$2" ;;
+    backup_flash) backup_flash "$2" ;;
+    restore_vm) restore_vm "$2" "$3" ;;
+    restore_appdata) restore_appdata "$2" ;;
+    restore_plugins) restore_plugins "$2" ;;
+    *) echo "Usage: $0 {backup_vm|backup_appdata|backup_plugins|backup_flash|restore_vm|restore_appdata|restore_plugins}" ;;
 esac

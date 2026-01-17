@@ -4,1138 +4,585 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Backup Unraid State</title>
-    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAA7AAAAOwBeShxvQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAGkSURBVFiF7ZY9TsNAEIW/WYMoKCgoKJAoKKCggIKCAoqIgoKCAoqQgv9fwAUoKCgoKCiggIKCIqKgoKBAoqCAgoKCgoICiYKCgoICCQoKJBQUkOzszK7XWSdx4phtZd/O2/d2Zt8q55wDBSqHBSD+5zkv+4j/4wLB9QIkVgCq1M8PAGBqekZMjI8TjxcxNj7B+MQknqcTyB4aHWNoeIShkVEGh4cZGBqib3CQ3r5+evv66e7upau7m46uTjo6O2nv6KS1vZ2W1jaa29poam2jsamZxqZmGhobaWhqob6xCfC0AH3DI/QNj9AzMEhX/wBtPb3U9/TSUNdMfWMzkURdBF8BDAyP0DswSEffAN0DA3T299HZ10dbdw9t3T20d3fT0dNNR083HZ1dtLd30d7RSWtHBy3t7TS3tdPc1k5TWxuNLa00tLTS0NxCfVMz9U3N1DU2UdfYRF1jE7WNjdQ0NFJdV09VXR2VtbVUVNdQXllJeWUlZRWVlJZXUFpWTkl5OSWlZRSXllFSUkJxSSnFJaUUFRVTVFRMUWERhUVFFBQWkl9QQG5+Prl5eWTn5JKZZ2b/ALVzfmXtFj/GAAAAAElFTkSuQmCC">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #ff8c2f;
+            --primary: #ff8c2f;
             --primary-hover: #ff9f4f;
-            --bg-dark: #121212;
-            --bg-card: #1e1e1e;
-            --bg-input: #2d2d2d;
-            --text-primary: #ffffff;
-            --text-secondary: #b0b0b0;
-            --text-muted: #808080;
-            --border-color: #3a3a3a;
-            --success-color: #4caf50;
-            --error-color: #f44336;
+            --bg-dark: #0a0a0a;
+            --bg-card: #141414;
+            --bg-input: #1a1a1a;
+            --bg-log: #0d0d0d;
+            --border: #2a2a2a;
+            --border-highlight: #3a3a3a;
+            --text: #e5e5e5;
+            --text-muted: #737373;
+            --success: #22c55e;
+            --error: #ef4444;
         }
         
-        * {
-            box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
         
         body {
-            background-color: var(--bg-dark);
-            color: var(--text-primary);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             font-size: 14px;
-            line-height: 1.5;
+            min-height: 100vh;
         }
         
-        /* Navbar */
         .navbar {
-            background-color: var(--bg-card) !important;
-            border-bottom: 1px solid var(--border-color);
-            padding: 1rem 1.5rem;
-        }
-        
-        .navbar-brand {
-            color: var(--primary-color) !important;
-            font-weight: 700;
-            font-size: 1.25rem;
-            letter-spacing: -0.5px;
-        }
-        
-        /* Tabs */
-        .nav-tabs {
-            border-bottom: 1px solid var(--border-color);
-            gap: 0.5rem;
-        }
-        
-        .nav-tabs .nav-link {
-            color: var(--text-secondary);
-            border: none;
-            padding: 1rem 1.5rem;
-            font-weight: 500;
-            transition: all 0.2s ease;
-            border-radius: 8px 8px 0 0;
-        }
-        
-        .nav-tabs .nav-link:hover {
-            color: var(--text-primary);
-            background-color: rgba(255, 140, 47, 0.1);
-        }
-        
-        .nav-tabs .nav-link.active {
-            background-color: transparent;
-            color: var(--primary-color);
-            border: none;
-            border-bottom: 3px solid var(--primary-color);
-        }
-        
-        /* Cards */
-        .card {
-            background-color: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            display: flex;
-            flex-direction: column;
-        }
-        
-        /* Equal height cards in rows */
-        .row {
-            display: flex;
-            flex-wrap: wrap;
-        }
-        
-        .row > [class*="col-"] {
-            display: flex;
-        }
-        
-        .row > [class*="col-"] > .card {
-            width: 100%;
-        }
-        
-        .card-header {
-            background-color: rgba(255, 140, 47, 0.15);
-            border-bottom: 1px solid var(--border-color);
-            font-weight: 600;
-            color: var(--text-primary);
-            padding: 1rem 1.25rem;
-            border-radius: 11px 11px 0 0;
-        }
-        
-        .card-body {
-            padding: 1.5rem;
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .card-body .btn {
-            margin-top: auto;
-        }
-        
-        /* Backup in progress animation */
-        @keyframes backupPulse {
-            0% {
-                box-shadow: 0 0 5px rgba(76, 175, 80, 0.5), 0 4px 6px rgba(0, 0, 0, 0.3);
-                border-color: rgba(76, 175, 80, 0.5);
-            }
-            50% {
-                box-shadow: 0 0 20px rgba(76, 175, 80, 0.8), 0 4px 6px rgba(0, 0, 0, 0.3);
-                border-color: rgba(76, 175, 80, 1);
-            }
-            100% {
-                box-shadow: 0 0 5px rgba(76, 175, 80, 0.5), 0 4px 6px rgba(0, 0, 0, 0.3);
-                border-color: rgba(76, 175, 80, 0.5);
-            }
-        }
-        
-        .card.backup-active {
-            animation: backupPulse 1.5s ease-in-out infinite;
-            border: 2px solid var(--success-color);
-        }
-        
-        .card.backup-active .card-header {
-            background-color: rgba(76, 175, 80, 0.25);
-        }
-        
-        /* Backup status indicator in card */
-        .backup-status {
-            display: none;
-            background-color: rgba(76, 175, 80, 0.15);
-            border-radius: 8px;
-            padding: 0.75rem;
-            margin-bottom: 1rem;
-            font-size: 13px;
-        }
-        
-        .backup-active .backup-status {
-            display: block;
-        }
-        
-        .backup-status .spinner-border {
-            width: 1rem;
-            height: 1rem;
-            border-width: 2px;
-        }
-        
-        .backup-status .elapsed-time {
-            font-weight: 600;
-            color: var(--success-color);
-        }
-        
-        /* Form Labels - IMPORTANT: Make them visible! */
-        .form-label,
-        label,
-        .form-check-label,
-        .card-body label,
-        .card-body .form-label {
-            color: #ffffff !important;
-            font-weight: 500;
-            margin-bottom: 0.5rem;
-            display: block;
-        }
-        
-        /* All text in cards should be visible */
-        .card-body {
-            color: #ffffff;
-        }
-        
-        .card-body p,
-        .card-body span,
-        .card-body div {
-            color: #ffffff;
-        }
-        
-        .card-body p.text-muted,
-        .card-body small.text-muted,
-        .card-body .text-muted {
-            color: #b0b0b0 !important;
-        }
-        
-        /* Radio and checkbox labels */
-        .form-check-label {
-            color: #ffffff !important;
-            font-weight: 400;
-        }
-        
-        /* Section titles */
-        h6, .h6 {
-            color: #ffffff !important;
-            font-weight: 600;
-        }
-        
-        /* Form Controls */
-        .form-control, .form-select {
-            background-color: var(--bg-input);
-            border: 1px solid var(--border-color);
-            color: var(--text-primary);
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            font-size: 14px;
-            transition: all 0.2s ease;
-        }
-        
-        .form-control:focus, .form-select:focus {
-            background-color: var(--bg-input);
-            border-color: var(--primary-color);
-            color: var(--text-primary);
-            box-shadow: 0 0 0 3px rgba(255, 140, 47, 0.2);
-            outline: none;
-        }
-        
-        .form-control::placeholder {
-            color: var(--text-muted);
-        }
-        
-        .form-select option {
-            background-color: var(--bg-input);
-            color: var(--text-primary);
-        }
-        
-        /* Checkboxes and Radios */
-        .form-check {
-            padding-left: 1.75rem;
-            margin-bottom: 0.75rem;
-        }
-        
-        .form-check-input {
-            width: 1.2rem;
-            height: 1.2rem;
-            margin-top: 0.1rem;
-            margin-left: -1.75rem;
-            background-color: var(--bg-input);
-            border: 2px solid var(--border-color);
-            cursor: pointer;
-        }
-        
-        .form-check-input:checked {
-            background-color: var(--primary-color);
-            border-color: var(--primary-color);
-        }
-        
-        .form-check-input:focus {
-            box-shadow: 0 0 0 3px rgba(255, 140, 47, 0.2);
-        }
-        
-        /* Switch */
-        .form-switch .form-check-input {
-            width: 2.5rem;
-            height: 1.25rem;
-            border-radius: 1rem;
-        }
-        
-        /* Buttons */
-        .btn {
+            background: var(--bg-card) !important;
+            border-bottom: 1px solid var(--border);
             padding: 0.75rem 1.5rem;
-            font-weight: 600;
-            border-radius: 8px;
-            transition: all 0.2s ease;
-            font-size: 14px;
         }
-        
-        .btn-primary {
-            background-color: var(--primary-color);
-            border-color: var(--primary-color);
-            color: #000;
-        }
-        
-        .btn-primary:hover {
-            background-color: var(--primary-hover);
-            border-color: var(--primary-hover);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(255, 140, 47, 0.4);
-        }
-        
-        .btn-outline-primary {
-            color: var(--primary-color);
-            border-color: var(--primary-color);
-            background: transparent;
-        }
-        
-        .btn-outline-primary:hover {
-            background-color: var(--primary-color);
-            color: #000;
-        }
-        
-        .btn-outline-secondary {
-            color: var(--text-secondary);
-            border-color: var(--border-color);
-        }
-        
-        .btn-outline-secondary:hover {
-            background-color: var(--border-color);
-            color: var(--text-primary);
-        }
-        
-        /* Tables */
-        .table {
-            color: var(--text-primary);
-        }
-        
-        .table-dark {
-            --bs-table-bg: var(--bg-card);
-            --bs-table-border-color: var(--border-color);
-        }
-        
-        /* List Groups */
-        .list-group-item {
-            background-color: transparent;
-            border-color: var(--border-color);
-            color: var(--text-primary);
-            padding: 1rem;
-        }
-        
-        .list-group-item:hover {
-            background-color: rgba(255, 255, 255, 0.05);
-        }
-        
-        /* Badges */
-        .badge-running {
-            background-color: var(--success-color);
-        }
-        
-        .badge-stopped {
-            background-color: var(--text-muted);
-        }
-        
-        /* Log Container */
-        .log-container {
-            background-color: #0d0d0d;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
-            font-size: 13px;
-            max-height: 500px;
-            overflow-y: auto;
-            padding: 1rem;
-        }
-        
-        .log-line {
-            margin: 0;
-            padding: 4px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            color: var(--text-secondary);
-        }
-        
-        .log-line:last-child {
-            border-bottom: none;
-        }
-        
-        /* Status Indicator */
-        .status-indicator {
-            width: 10px;
-            height: 10px;
+        .navbar-brand { color: var(--primary) !important; font-weight: 700; font-size: 1.1rem; }
+        .status-dot {
+            width: 8px; height: 8px;
+            background: var(--success);
             border-radius: 50%;
             display: inline-block;
-            margin-right: 8px;
+        }
+        .status-dot.running { background: var(--primary); animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        
+        .nav-tabs {
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-card);
+            padding: 0 1rem;
+        }
+        .nav-tabs .nav-link {
+            color: var(--text-muted); border: none;
+            padding: 0.875rem 1.25rem; font-weight: 500; font-size: 13px;
+        }
+        .nav-tabs .nav-link:hover { color: var(--text); }
+        .nav-tabs .nav-link.active { color: var(--primary); background: transparent; border-bottom: 2px solid var(--primary); }
+        
+        .main-container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+        
+        .dashboard-card {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 1rem 1.5rem; margin-bottom: 1.5rem;
+        }
+        .stat-row { display: flex; flex-wrap: wrap; gap: 2rem; }
+        .stat-item { display: flex; gap: 0.5rem; font-size: 13px; }
+        .stat-label { color: var(--text-muted); }
+        .stat-value { color: var(--text); font-weight: 500; }
+        
+        .cards-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
+        @media (max-width: 1024px) { .cards-grid { grid-template-columns: 1fr; } }
+        
+        .backup-card {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; min-height: 420px;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .backup-card.critical { border-color: var(--primary); }
+        .backup-card.running { border-color: var(--success); box-shadow: 0 0 20px rgba(34, 197, 94, 0.15); }
+        
+        .card-header-custom {
+            padding: 0.875rem 1.25rem; border-bottom: 1px solid var(--border);
+            font-weight: 600; font-size: 14px;
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+        .backup-card.critical .card-header-custom { color: var(--primary); }
+        .badge-critical { background: var(--error); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+        
+        .card-controls { flex: 1; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+        .card-cta { padding: 0 1.25rem 1rem; }
+        
+        .progress-container { padding: 0 1.25rem 0.75rem; display: none; }
+        .progress-container.active { display: block; }
+        .progress-track { width: 100%; height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.3s ease; }
+        .progress-fill.complete { background: var(--success); }
+        .progress-fill.error { background: var(--error); }
+        
+        .card-log {
+            border-top: 1px solid var(--border); background: var(--bg-log);
+            padding: 0.75rem 1rem; height: 110px; overflow-y: auto;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace; font-size: 11px;
+        }
+        .card-log::-webkit-scrollbar { width: 4px; }
+        .card-log::-webkit-scrollbar-track { background: transparent; }
+        .card-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .log-line { color: var(--text-muted); line-height: 1.6; }
+        .log-line.success { color: var(--success); }
+        .log-line.error { color: var(--error); }
+        .log-idle { color: var(--text-muted); font-style: italic; }
+        
+        .form-label { color: var(--text) !important; font-size: 12px; font-weight: 500; margin-bottom: 0.375rem; }
+        .form-control, .form-select {
+            background: var(--bg-input); border: 1px solid var(--border);
+            color: var(--text); font-size: 13px; padding: 0.5rem 0.75rem; border-radius: 6px;
+        }
+        .form-control:focus, .form-select:focus {
+            background: var(--bg-input); border-color: var(--primary);
+            color: var(--text); box-shadow: 0 0 0 2px rgba(255, 140, 47, 0.15);
+        }
+        .form-check-input { background-color: var(--bg-input); border-color: var(--border); }
+        .form-check-input:checked { background-color: var(--primary); border-color: var(--primary); }
+        .form-check-label { color: var(--text) !important; font-size: 13px; }
+        
+        .btn-primary {
+            background: var(--primary); border: none; color: #000;
+            font-weight: 600; padding: 0.625rem 1rem; font-size: 13px; border-radius: 8px;
+        }
+        .btn-primary:hover { background: var(--primary-hover); color: #000; }
+        .btn-primary:disabled { background: var(--primary); opacity: 0.6; cursor: not-allowed; }
+        .btn-outline-secondary { border-color: var(--border); color: var(--text-muted); }
+        .btn-outline-secondary:hover { background: var(--bg-input); border-color: var(--border-highlight); color: var(--text); }
+        
+        .day-btn {
+            width: 40px; height: 32px; border-radius: 6px;
+            border: 1px solid var(--border); background: var(--bg-input);
+            color: var(--text-muted); font-size: 11px; font-weight: 600; cursor: pointer;
+        }
+        .day-btn:hover { border-color: var(--border-highlight); color: var(--text); }
+        .day-btn.active { background: var(--primary); border-color: var(--primary); color: #000; }
+        
+        .settings-section {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem;
+        }
+        .settings-section h6 { font-size: 14px; font-weight: 600; margin-bottom: 1rem; }
+        
+        .path-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; font-size: 13px; }
+        .path-item code { color: var(--primary); background: rgba(255, 140, 47, 0.1); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        
+        .exclude-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; max-height: 180px; overflow-y: auto; }
+        @media (max-width: 768px) { .exclude-grid { grid-template-columns: repeat(2, 1fr); } }
+        
+        .backup-list { background: var(--bg-input); border-radius: 8px; overflow: hidden; }
+        .backup-list-header {
+            display: grid; grid-template-columns: 1fr 100px 70px 70px; gap: 0.5rem;
+            padding: 0.5rem 0.75rem; background: var(--bg-card);
+            font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+        }
+        .backup-list-item {
+            display: grid; grid-template-columns: 1fr 100px 70px 70px; gap: 0.5rem;
+            padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); font-size: 12px; align-items: center;
         }
         
-        .status-running {
-            background-color: var(--success-color);
-            animation: pulse 2s infinite;
-            box-shadow: 0 0 8px var(--success-color);
-        }
-        
-        .status-idle {
-            background-color: var(--text-muted);
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        /* Folder List */
-        .folder-list {
-            max-height: 300px;
-            overflow-y: auto;
-            background-color: var(--bg-input);
-            border-radius: 8px;
-            padding: 1rem;
-            border: 1px solid var(--border-color);
-        }
-        
-        .folder-list .form-check {
-            padding: 0.5rem 0.5rem 0.5rem 2rem;
-            margin: 0;
-            border-radius: 4px;
-        }
-        
-        .folder-list .form-check:hover {
-            background-color: rgba(255, 255, 255, 0.05);
-        }
-        
-        /* Toast */
-        .toast-container {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1050;
-        }
-        
-        .toast {
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-        }
-        
-        /* Alerts */
-        .alert {
-            border-radius: 8px;
-            border: none;
-        }
-        
-        .alert-secondary {
-            background-color: rgba(255, 255, 255, 0.1);
-            color: var(--text-primary);
-        }
-        
-        .alert-secondary code {
-            color: var(--primary-color);
-            background-color: rgba(0, 0, 0, 0.3);
-            padding: 2px 6px;
-            border-radius: 4px;
-        }
-        
-        /* Text utilities */
-        .text-muted {
-            color: var(--text-muted) !important;
-        }
-        
-        .text-light {
-            color: var(--text-primary) !important;
-        }
-        
-        small.text-muted {
-            color: var(--text-secondary) !important;
-        }
-        
-        /* Section Headers */
-        h6 {
-            color: var(--text-primary);
-            font-weight: 600;
-            margin-bottom: 1rem;
-        }
-        
-        /* Responsive spacing */
-        .mb-3 {
-            margin-bottom: 1.25rem !important;
-        }
-        
-        .mb-4 {
-            margin-bottom: 1.5rem !important;
-        }
-        
-        /* Custom scrollbar */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: var(--bg-dark);
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: var(--border-color);
-            border-radius: 4px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--text-muted);
+        .full-log {
+            background: var(--bg-log); border: 1px solid var(--border);
+            border-radius: 8px; padding: 1rem; height: 500px; overflow-y: auto;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace; font-size: 12px;
         }
     </style>
 </head>
 <body>
-    <!-- Navbar -->
-    <nav class="navbar navbar-dark">
+    <nav class="navbar">
         <div class="container-fluid">
-            <span class="navbar-brand">
-                <i class="bi bi-hdd-stack me-2"></i>
-                Backup Unraid State
-            </span>
+            <span class="navbar-brand"><i class="bi bi-hdd-stack me-2"></i>Backup Unraid State</span>
             <span class="text-muted small">
-                <span class="status-indicator status-idle" id="statusIndicator"></span>
-                <span id="statusText">Idle</span>
+                <span class="status-dot" id="globalStatus"></span>
+                <span class="ms-2" id="globalStatusText">Idle</span>
             </span>
         </div>
     </nav>
 
-    <!-- Main Content -->
-    <div class="container-fluid py-4">
-        <!-- Tabs -->
-        <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
-            <li class="nav-item">
-                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#backup" type="button">
-                    <i class="bi bi-cloud-upload me-1"></i> Backup Now
-                </button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#schedule" type="button">
-                    <i class="bi bi-clock me-1"></i> Schedule
-                </button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#restore" type="button">
-                    <i class="bi bi-cloud-download me-1"></i> Restore
-                </button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings" type="button">
-                    <i class="bi bi-gear me-1"></i> Settings
-                </button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#logs" type="button">
-                    <i class="bi bi-journal-text me-1"></i> Logs
-                </button>
-            </li>
-        </ul>
+    <ul class="nav nav-tabs" id="mainTabs">
+        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#backup"><i class="bi bi-cloud-upload me-1"></i>Backup Now</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#schedule"><i class="bi bi-clock me-1"></i>Schedule</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#restore"><i class="bi bi-cloud-download me-1"></i>Restore</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings"><i class="bi bi-gear me-1"></i>Settings</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#logs"><i class="bi bi-journal-text me-1"></i>Logs</button></li>
+    </ul>
 
-        <!-- Tab Content -->
+    <div class="main-container">
         <div class="tab-content">
-            <!-- Backup Tab -->
+            <!-- BACKUP NOW TAB -->
             <div class="tab-pane fade show active" id="backup">
-                <div class="row">
-                    <!-- VM Backup -->
-                    <div class="col-md-6 mb-4">
-                        <div class="card h-100" id="vmBackupCard">
-                            <div class="card-header">
-                                <i class="bi bi-pc-display me-2"></i>VM Backup
-                            </div>
-                            <div class="card-body">
-                                <div class="backup-status">
-                                    <span class="spinner-border spinner-border-sm text-success me-2"></span>
-                                    Backup in progress... <span class="elapsed-time">0:00</span>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label" for="vmSelect">Select VM</label>
-                                    <select class="form-select" id="vmSelect">
-                                        <option value="">Loading VMs...</option>
-                                    </select>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label" for="vmHandling">VM Handling</label>
-                                    <select class="form-select" id="vmHandling">
-                                        <option value="stop">Stop VM during backup (recommended)</option>
-                                        <option value="live">Live backup (VM stays running)</option>
-                                    </select>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="vmCompress" checked>
-                                        <label class="form-check-label" for="vmCompress">
-                                            Compress backup (smaller but slower)
-                                        </label>
-                                    </div>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label" for="vmNaming">Naming Scheme</label>
-                                    <select class="form-select" id="vmNaming">
-                                        <option value="weekly">Weekly (week01, week02...)</option>
-                                        <option value="daily">Daily (day1_week01...)</option>
-                                        <option value="monthly">Monthly (January_2025...)</option>
-                                    </select>
-                                </div>
-                                
-                                <button class="btn btn-primary w-100" onclick="startVmBackup()">
-                                    <i class="bi bi-play-fill me-1"></i>Start VM Backup
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Appdata Backup -->
-                    <div class="col-md-6 mb-4">
-                        <div class="card h-100" id="appdataBackupCard">
-                            <div class="card-header">
-                                <i class="bi bi-folder me-2"></i>Appdata Backup
-                            </div>
-                            <div class="card-body">
-                                <div class="backup-status">
-                                    <span class="spinner-border spinner-border-sm text-success me-2"></span>
-                                    Backup in progress... <span class="elapsed-time">0:00</span>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Backup Mode</label>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="appdataMode" id="appdataModeAll" value="all" checked>
-                                        <label class="form-check-label" for="appdataModeAll">
-                                            Backup All Folders (<span id="folderCount">...</span> apps)
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="appdataMode" id="appdataModeCustom" value="custom">
-                                        <label class="form-check-label" for="appdataModeCustom">
-                                            Select Specific Folders
-                                        </label>
-                                    </div>
-                                </div>
-                                
-                                <div class="folder-list mb-3" id="folderList" style="display: none;">
-                                    <p class="text-muted">Loading folders...</p>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label" for="appdataNaming">Naming Scheme</label>
-                                    <select class="form-select" id="appdataNaming">
-                                        <option value="weekly">Weekly</option>
-                                        <option value="daily">Daily</option>
-                                        <option value="monthly">Monthly</option>
-                                    </select>
-                                </div>
-                                
-                                <button class="btn btn-primary w-100" onclick="startAppdataBackup()">
-                                    <i class="bi bi-play-fill me-1"></i>Start Appdata Backup
-                                </button>
-                            </div>
-                        </div>
+                <div class="dashboard-card">
+                    <div class="stat-row">
+                        <div class="stat-item"><span class="stat-label">Last VM Backup:</span><span class="stat-value" id="statsLastVm">—</span></div>
+                        <div class="stat-item"><span class="stat-label">Last Appdata Backup:</span><span class="stat-value" id="statsLastAppdata">—</span></div>
+                        <div class="stat-item"><span class="stat-label">Total Backup Size:</span><span class="stat-value" id="statsTotalSize">0.0 B</span></div>
+                        <div class="stat-item"><span class="stat-label">Next Scheduled:</span><span class="stat-value" id="statsNextScheduled">—</span></div>
                     </div>
                 </div>
 
-                <!-- Plugins Backup -->
-                <div class="row">
-                    <div class="col-md-6 mb-4">
-                        <div class="card h-100" id="pluginsBackupCard">
-                            <div class="card-header">
-                                <i class="bi bi-puzzle me-2"></i>Plugins Backup
-                            </div>
-                            <div class="card-body">
-                                <div class="backup-status">
-                                    <span class="spinner-border spinner-border-sm text-success me-2"></span>
-                                    Backup in progress... <span class="elapsed-time">0:00</span>
-                                </div>
-                                <p class="text-muted mb-3">Backup all plugin configurations from /boot/config/plugins/</p>
-                                <button class="btn btn-primary" onclick="startPluginsBackup()">
-                                    <i class="bi bi-play-fill me-1"></i>Start Plugins Backup
-                                </button>
-                            </div>
+                <div class="cards-grid">
+                    <!-- VM Backup Card -->
+                    <div class="backup-card" id="vmCard">
+                        <div class="card-header-custom"><i class="bi bi-pc-display"></i>VM Backup</div>
+                        <div class="card-controls">
+                            <div><label class="form-label">Select VM</label><select class="form-select" id="vmSelect"><option>Loading...</option></select></div>
+                            <div><label class="form-label">VM Handling</label><select class="form-select" id="vmHandling"><option value="stop">Stop VM during backup</option><option value="live">Live backup</option></select></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" id="vmCompress" checked><label class="form-check-label" for="vmCompress">Compress backup</label></div>
                         </div>
+                        <div class="card-cta"><button class="btn btn-primary w-100" id="vmBackupBtn" onclick="startBackup('vm')"><i class="bi bi-play-fill me-1"></i>Start VM Backup</button></div>
+                        <div class="progress-container" id="vmProgress"><div class="progress-track"><div class="progress-fill" id="vmProgressFill"></div></div></div>
+                        <div class="card-log" id="vmLog"><div class="log-idle">Waiting for user action…</div></div>
                     </div>
-                    
-                    <!-- Flash Backup - Disaster Recovery -->
-                    <div class="col-md-6 mb-4">
-                        <div class="card h-100" id="flashBackupCard" style="border-color: var(--primary-color);">
-                            <div class="card-header" style="background-color: rgba(255, 140, 47, 0.25);">
-                                <i class="bi bi-usb-drive me-2"></i>Flash Backup <span class="badge bg-danger ms-2">Critical</span>
+
+                    <!-- Appdata Backup Card -->
+                    <div class="backup-card" id="appdataCard">
+                        <div class="card-header-custom"><i class="bi bi-folder"></i>Appdata Backup</div>
+                        <div class="card-controls">
+                            <div><label class="form-label">Backup Mode</label>
+                                <div class="form-check"><input class="form-check-input" type="radio" name="appdataMode" id="appdataModeAll" value="all" checked><label class="form-check-label" for="appdataModeAll">Backup all folders (<span id="folderCount">0</span> apps)</label></div>
+                                <div class="form-check"><input class="form-check-input" type="radio" name="appdataMode" id="appdataModeCustom" value="custom"><label class="form-check-label" for="appdataModeCustom">Select specific</label></div>
                             </div>
-                            <div class="card-body">
-                                <div class="backup-status">
-                                    <span class="spinner-border spinner-border-sm text-success me-2"></span>
-                                    Backup in progress... <span class="elapsed-time">0:00</span>
-                                </div>
-                                <p class="mb-2"><strong>Disaster Recovery Backup</strong></p>
-                                <p class="text-muted small mb-3">
-                                    Backs up your entire USB flash configuration including:
-                                </p>
-                                <ul class="text-muted small mb-3" style="padding-left: 1.2rem;">
-                                    <li>Array configuration (disk assignments)</li>
-                                    <li>Network settings</li>
-                                    <li>User accounts &amp; passwords</li>
-                                    <li>Share definitions</li>
-                                    <li>Docker &amp; VM settings</li>
-                                    <li>SSL certificates</li>
-                                    <li>License key</li>
-                                </ul>
-                                <button class="btn btn-primary w-100" onclick="startFlashBackup()">
-                                    <i class="bi bi-shield-check me-1"></i>Start Flash Backup
-                                </button>
-                            </div>
+                            <div id="folderListContainer" style="display:none;"><div class="exclude-grid" id="folderList"></div></div>
                         </div>
+                        <div class="card-cta"><button class="btn btn-primary w-100" id="appdataBackupBtn" onclick="startBackup('appdata')"><i class="bi bi-play-fill me-1"></i>Start Appdata Backup</button></div>
+                        <div class="progress-container" id="appdataProgress"><div class="progress-track"><div class="progress-fill" id="appdataProgressFill"></div></div></div>
+                        <div class="card-log" id="appdataLog"><div class="log-idle">Waiting for user action…</div></div>
                     </div>
-                </div>
-                
-                <!-- Live Activity Log -->
-                <div class="row mt-2">
-                    <div class="col-12">
-                        <div class="card">
-                            <div class="card-header d-flex justify-content-between align-items-center">
-                                <span><i class="bi bi-activity me-2"></i>Live Activity</span>
-                                <div>
-                                    <span class="status-indicator status-idle me-2" id="activityIndicator"></span>
-                                    <button class="btn btn-sm btn-outline-secondary" onclick="clearActivityLog()">
-                                        <i class="bi bi-trash"></i> Clear
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="card-body p-0">
-                                <div class="log-container" id="activityLog" style="max-height: 200px; min-height: 100px;">
-                                    <p class="text-muted p-3 m-0">Waiting for backup activity...</p>
-                                </div>
+
+                    <!-- Plugins Backup Card -->
+                    <div class="backup-card" id="pluginsCard">
+                        <div class="card-header-custom"><i class="bi bi-puzzle"></i>Plugins Backup</div>
+                        <div class="card-controls">
+                            <p class="small mb-1" style="color: var(--text);">Backup all plugin configurations from:</p>
+                            <p class="small mb-0" style="color: var(--text-muted); font-family: monospace;">/boot/config/plugins/</p>
+                        </div>
+                        <div class="card-cta"><button class="btn btn-primary w-100" id="pluginsBackupBtn" onclick="startBackup('plugins')"><i class="bi bi-play-fill me-1"></i>Start Plugins Backup</button></div>
+                        <div class="progress-container" id="pluginsProgress"><div class="progress-track"><div class="progress-fill" id="pluginsProgressFill"></div></div></div>
+                        <div class="card-log" id="pluginsLog"><div class="log-idle">Waiting for user action…</div></div>
+                    </div>
+
+                    <!-- Flash Backup Card -->
+                    <div class="backup-card critical" id="flashCard">
+                        <div class="card-header-custom"><i class="bi bi-usb-drive"></i>Flash Backup<span class="badge-critical ms-2">CRITICAL</span></div>
+                        <div class="card-controls">
+                            <p class="small mb-2" style="color: var(--text);"><strong>Disaster Recovery Backup</strong></p>
+                            <div class="small" style="color: #b0b0b0; line-height: 1.8;">
+                                • Array configuration<br>
+                                • Network settings<br>
+                                • User accounts<br>
+                                • Docker &amp; VM settings<br>
+                                • SSL &amp; License
                             </div>
                         </div>
+                        <div class="card-cta"><button class="btn btn-primary w-100" id="flashBackupBtn" onclick="startBackup('flash')"><i class="bi bi-shield-check me-1"></i>Start Flash Backup</button></div>
+                        <div class="progress-container" id="flashProgress"><div class="progress-track"><div class="progress-fill" id="flashProgressFill"></div></div></div>
+                        <div class="card-log" id="flashLog"><div class="log-idle">Waiting for user action…</div></div>
                     </div>
                 </div>
             </div>
 
-            <!-- Schedule Tab -->
+            <!-- SCHEDULE TAB -->
             <div class="tab-pane fade" id="schedule">
-                <div class="card">
-                    <div class="card-header">
-                        <i class="bi bi-calendar-check me-2"></i>Scheduled Backups
-                    </div>
-                    <div class="card-body">
-                        <div class="row mb-4">
-                            <div class="col-md-6">
-                                <div class="form-check form-switch mb-3">
-                                    <input class="form-check-input" type="checkbox" id="scheduleEnabled" {% if schedule.enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="scheduleEnabled">
-                                        <strong>Enable Scheduled Backups</strong>
-                                    </label>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label" for="scheduleTime">Backup Time</label>
-                                    <input type="time" class="form-control" id="scheduleTime" value="{{ schedule.time }}">
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label">Days to Run</label>
-                                    <div class="d-flex flex-wrap gap-3">
-                                        {% for day in ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] %}
-                                        <div class="form-check">
-                                            <input class="form-check-input schedule-day" type="checkbox" value="{{ day.lower() }}" 
-                                                   id="day_{{ day }}" {% if day.lower() in schedule.days %}checked{% endif %}>
-                                            <label class="form-check-label" for="day_{{ day }}">{{ day[:3] }}</label>
-                                        </div>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label" for="scheduleNaming">Naming Scheme</label>
-                                    <select class="form-select" id="scheduleNaming">
-                                        <option value="weekly" {% if schedule.naming_scheme == 'weekly' %}selected{% endif %}>Weekly</option>
-                                        <option value="daily" {% if schedule.naming_scheme == 'daily' %}selected{% endif %}>Daily</option>
-                                        <option value="monthly" {% if schedule.naming_scheme == 'monthly' %}selected{% endif %}>Monthly</option>
-                                    </select>
-                                </div>
-                            </div>
-                            
-                            <div class="col-md-6">
-                                <label class="form-label mb-3">What to Backup</label>
-                                
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" id="scheduleVm" {% if schedule.vm_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="scheduleVm">VMs</label>
-                                </div>
-                                
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" id="scheduleAppdata" {% if schedule.appdata_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="scheduleAppdata">Appdata</label>
-                                </div>
-                                
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" id="schedulePlugins" {% if schedule.plugins_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="schedulePlugins">Plugins</label>
-                                </div>
-                                
-                                <div class="form-check mb-3">
-                                    <input class="form-check-input" type="checkbox" id="scheduleFlash" {% if schedule.flash_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="scheduleFlash">
-                                        Flash Drive <span class="badge bg-danger">Critical</span>
-                                    </label>
-                                    <small class="d-block text-muted mt-1">Disaster recovery backup</small>
-                                </div>
+                <div class="settings-section">
+                    <h6><i class="bi bi-calendar-check me-2"></i>Scheduled Backups</h6>
+                    <div class="row g-4 align-items-end">
+                        <div class="col-auto">
+                            <label class="form-label">Enable</label>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="scheduleEnabled" {% if schedule.enabled %}checked{% endif %} style="width:2.5em;height:1.25em;">
+                                <label class="form-check-label" for="scheduleEnabled">Scheduled Backups</label>
                             </div>
                         </div>
-                        
-                        <button class="btn btn-primary" onclick="saveSchedule()">
-                            <i class="bi bi-check-lg me-1"></i>Save Schedule
-                        </button>
+                        <div class="col-auto">
+                            <label class="form-label">Time</label>
+                            <input type="time" class="form-control" id="scheduleTime" value="{{ schedule.time }}" style="width:120px;">
+                        </div>
+                        <div class="col-auto">
+                            <label class="form-label">Days</label>
+                            <div class="d-flex gap-1">
+                                {% for day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] %}
+                                <button type="button" class="day-btn {% if day.lower() in schedule.days %}active{% endif %}" data-day="{{ day.lower() }}" onclick="toggleDay(this)">{{ day }}</button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-auto">
+                            <label class="form-label">Naming</label>
+                            <select class="form-select" id="scheduleNaming" style="width:120px;">
+                                <option value="weekly" {% if schedule.naming_scheme == 'weekly' %}selected{% endif %}>Weekly</option>
+                                <option value="daily" {% if schedule.naming_scheme == 'daily' %}selected{% endif %}>Daily</option>
+                                <option value="monthly" {% if schedule.naming_scheme == 'monthly' %}selected{% endif %}>Monthly</option>
+                            </select>
+                        </div>
+                        <div class="col">
+                            <label class="form-label">What to Backup</label>
+                            <div class="d-flex flex-wrap gap-3">
+                                <div class="form-check"><input class="form-check-input" type="checkbox" id="scheduleVm" {% if schedule.vm_enabled %}checked{% endif %}><label class="form-check-label" for="scheduleVm">VMs</label></div>
+                                <div class="form-check"><input class="form-check-input" type="checkbox" id="scheduleAppdata" {% if schedule.appdata_enabled %}checked{% endif %}><label class="form-check-label" for="scheduleAppdata">Appdata</label></div>
+                                <div class="form-check"><input class="form-check-input" type="checkbox" id="schedulePlugins" {% if schedule.plugins_enabled %}checked{% endif %}><label class="form-check-label" for="schedulePlugins">Plugins</label></div>
+                                <div class="form-check"><input class="form-check-input" type="checkbox" id="scheduleFlash" {% if schedule.flash_enabled %}checked{% endif %}><label class="form-check-label" for="scheduleFlash">Flash <span class="badge-critical">Critical</span></label></div>
+                            </div>
+                        </div>
                     </div>
+                    <button class="btn btn-primary w-100 mt-4" onclick="saveSchedule()"><i class="bi bi-check-lg me-1"></i>Save Schedule</button>
                 </div>
             </div>
 
-            <!-- Restore Tab -->
+            <!-- RESTORE TAB -->
             <div class="tab-pane fade" id="restore">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0">Available Backups</h5>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="refreshBackupList()">
-                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                    </button>
-                </div>
-                <div class="row" id="backupListContainer">
-                    <div class="col-md-6 col-lg-3 mb-4">
-                        <div class="card h-100">
-                            <div class="card-header">VM Backups</div>
-                            <div class="card-body" id="vmBackupsList">
-                                <p class="text-muted">Loading...</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-6 col-lg-3 mb-4">
-                        <div class="card h-100">
-                            <div class="card-header">Appdata Backups</div>
-                            <div class="card-body" id="appdataBackupsList">
-                                <p class="text-muted">Loading...</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-6 col-lg-3 mb-4">
-                        <div class="card h-100">
-                            <div class="card-header">Plugin Backups</div>
-                            <div class="card-body" id="pluginsBackupsList">
-                                <p class="text-muted">Loading...</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-6 col-lg-3 mb-4">
-                        <div class="card h-100" style="border-color: var(--primary-color);">
-                            <div class="card-header" style="background-color: rgba(255, 140, 47, 0.25);">
-                                <i class="bi bi-usb-drive me-2"></i>Flash Backups
-                            </div>
-                            <div class="card-body" id="flashBackupsList">
-                                <p class="text-muted">Loading...</p>
-                            </div>
-                        </div>
-                    </div>
+                <div class="row g-4">
+                    <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-pc-display me-2"></i>VM Backups</h6><div class="backup-list" id="vmBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div></div></div>
+                    <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-folder me-2"></i>Appdata Backups</h6><div class="backup-list" id="appdataBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div></div></div>
+                    <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-puzzle me-2"></i>Plugin Backups</h6><div class="backup-list" id="pluginsBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div></div></div>
+                    <div class="col-md-6"><div class="settings-section" style="border-color:var(--primary);"><h6 style="color:var(--primary);"><i class="bi bi-usb-drive me-2"></i>Flash Backups</h6><div class="backup-list" id="flashBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div></div></div>
                 </div>
             </div>
 
-            <!-- Settings Tab -->
+            <!-- SETTINGS TAB -->
             <div class="tab-pane fade" id="settings">
-                <div class="card">
-                    <div class="card-header">
-                        <i class="bi bi-gear me-2"></i>Settings
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="mb-3">
-                                    <label class="form-label" for="maxBackups">Maximum Backups to Keep</label>
-                                    <input type="number" class="form-control" id="maxBackups" value="{{ config.max_backups }}" min="1" max="10">
-                                    <small class="text-muted">Older backups will be automatically deleted</small>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label" for="defaultNaming">Default Naming Scheme</label>
-                                    <select class="form-select" id="defaultNaming">
-                                        <option value="weekly" {% if config.naming_scheme == 'weekly' %}selected{% endif %}>Weekly</option>
-                                        <option value="daily" {% if config.naming_scheme == 'daily' %}selected{% endif %}>Daily</option>
-                                        <option value="monthly" {% if config.naming_scheme == 'monthly' %}selected{% endif %}>Monthly</option>
-                                    </select>
-                                </div>
-                            </div>
-                            
-                            <div class="col-md-6">
-                                <div class="alert alert-secondary">
-                                    <label class="form-label"><i class="bi bi-info-circle me-1"></i>Path Configuration</label>
-                                    <p class="mb-1 small">Paths are configured via Docker volume mappings:</p>
-                                    <ul class="small mb-0">
-                                        <li><code>/backup</code> → Backup destination</li>
-                                        <li><code>/domains</code> → VM storage</li>
-                                        <li><code>/appdata</code> → Appdata folder</li>
-                                        <li><code>/plugins</code> → Plugin configs</li>
-                                        <li><code>/boot</code> → Flash drive (disaster recovery)</li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <button class="btn btn-primary" onclick="saveSettings()">
-                            <i class="bi bi-check-lg me-1"></i>Save Settings
-                        </button>
-                    </div>
+                <div class="row g-4">
+                    <div class="col-md-6"><div class="settings-section h-100"><h6><i class="bi bi-sliders me-2"></i>General Settings</h6>
+                        <div class="mb-3"><label class="form-label">Maximum Backups</label><input type="number" class="form-control" id="maxBackups" value="{{ config.max_backups }}" min="1" max="10" style="width:100px;"></div>
+                        <div class="mb-3"><label class="form-label">Naming Scheme</label><select class="form-select" id="defaultNaming" style="width:150px;"><option value="weekly" {% if config.naming_scheme == 'weekly' %}selected{% endif %}>Weekly</option><option value="daily" {% if config.naming_scheme == 'daily' %}selected{% endif %}>Daily</option><option value="monthly" {% if config.naming_scheme == 'monthly' %}selected{% endif %}>Monthly</option></select></div>
+                    </div></div>
+                    <div class="col-md-6"><div class="settings-section h-100"><h6><i class="bi bi-gear me-2"></i>Backup Behaviour</h6>
+                        <div class="mb-3"><label class="form-label">Compression</label><select class="form-select" id="compressionLevel" style="width:180px;"><option value="1" {% if config.compression_level == 1 %}selected{% endif %}>1 - Fastest</option><option value="3" {% if config.compression_level == 3 %}selected{% endif %}>3 - Fast</option><option value="6" {% if config.compression_level == 6 or not config.compression_level %}selected{% endif %}>6 - Balanced</option><option value="9" {% if config.compression_level == 9 %}selected{% endif %}>9 - Maximum</option></select></div>
+                        <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="verifyBackups" {% if config.verify_backups != false %}checked{% endif %}><label class="form-check-label" for="verifyBackups">Verify backups</label></div>
+                        <div class="form-check"><input class="form-check-input" type="checkbox" id="incrementalEnabled" {% if config.incremental_enabled %}checked{% endif %}><label class="form-check-label" for="incrementalEnabled">Incremental (Appdata)</label></div>
+                    </div></div>
+                    <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-folder-x me-2"></i>Exclude Folders</h6><p class="text-muted small mb-2">Skip during backup:</p><div class="exclude-grid" id="excludeFoldersList"><p class="text-muted small">Loading...</p></div></div></div>
+                    <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-signpost-2 me-2"></i>Paths</h6><p class="text-muted small mb-2">Docker volumes:</p>
+                        <div class="path-item"><code>/backup</code><span class="text-muted">→</span><span>Destination</span></div>
+                        <div class="path-item"><code>/domains</code><span class="text-muted">→</span><span>VM storage</span></div>
+                        <div class="path-item"><code>/appdata</code><span class="text-muted">→</span><span>Docker data</span></div>
+                        <div class="path-item"><code>/plugins</code><span class="text-muted">→</span><span>Plugins</span></div>
+                        <div class="path-item"><code>/boot</code><span class="text-muted">→</span><span>Flash drive</span></div>
+                    </div></div>
                 </div>
+                <button class="btn btn-primary w-100 mt-3" onclick="saveSettings()"><i class="bi bi-check-lg me-1"></i>Save Settings</button>
             </div>
 
-            <!-- Logs Tab -->
+            <!-- LOGS TAB -->
             <div class="tab-pane fade" id="logs">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <span><i class="bi bi-journal-text me-2"></i>Backup Log</span>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshLog()">
-                            <i class="bi bi-arrow-clockwise"></i> Refresh
-                        </button>
+                <div class="settings-section">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0"><i class="bi bi-journal-text me-2"></i>Backup Log</h6>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="refreshLog()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
                     </div>
-                    <div class="card-body">
-                        <div class="log-container" id="logContainer">
-                            <p class="text-muted">Loading logs...</p>
-                        </div>
-                    </div>
+                    <div class="full-log" id="fullLog"><p class="text-muted">Loading...</p></div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Toast Container -->
-    <div class="toast-container" id="toastContainer"></div>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Show/hide folder list based on mode selection
-        document.querySelectorAll('input[name="appdataMode"]').forEach(radio => {
-            radio.addEventListener('change', function() {
-                document.getElementById('folderList').style.display = 
-                    this.value === 'custom' ? 'block' : 'none';
-            });
-        });
-
-        // Toast notification
-        function showToast(message, type = 'success') {
-            const toast = document.createElement('div');
-            toast.className = `toast show bg-${type === 'success' ? 'success' : 'danger'} text-white`;
-            toast.innerHTML = `
-                <div class="toast-body d-flex justify-content-between align-items-center">
-                    ${message}
-                    <button type="button" class="btn-close btn-close-white" onclick="this.parentElement.parentElement.remove()"></button>
-                </div>
-            `;
-            document.getElementById('toastContainer').appendChild(toast);
-            setTimeout(() => toast.remove(), 5000);
+        // State tracking
+        const backupState = { vm: null, appdata: null, plugins: null, flash: null };
+        const eventSources = { vm: null, appdata: null, plugins: null, flash: null };
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
-
-        // Set status
-        function setStatus(running, text) {
-            const indicator = document.getElementById('statusIndicator');
-            const statusText = document.getElementById('statusText');
-            
-            indicator.className = 'status-indicator ' + (running ? 'status-running' : 'status-idle');
-            statusText.textContent = text;
-        }
-
-        // API calls with better error handling
-        async function apiCall(endpoint, method = 'GET', data = null) {
-            console.log(`API Call: ${method} ${endpoint}`, data);
-            
+        
+        async function apiCall(url, method = 'GET', data = null) {
             try {
-                const options = {
-                    method,
-                    headers: { 'Content-Type': 'application/json' }
-                };
-                if (data) options.body = JSON.stringify(data);
-                
-                const response = await fetch(endpoint, options);
-                console.log(`API Response status: ${response.status}`);
-                
-                const result = await response.json();
-                console.log('API Response:', result);
-                return result;
-            } catch (error) {
-                console.error('API Error:', error);
-                showToast('Connection error: ' + error.message, 'error');
-                return { success: false, error: error.message };
-            }
-        }
-
-        // Backup timer management
-        let backupTimers = {};
-        
-        function startBackupTimer(cardId) {
-            const card = document.getElementById(cardId);
-            if (!card) return;
-            
-            card.classList.add('backup-active');
-            const startTime = Date.now();
-            const elapsedSpan = card.querySelector('.elapsed-time');
-            
-            // Clear any existing timer
-            if (backupTimers[cardId]) {
-                clearInterval(backupTimers[cardId]);
-            }
-            
-            // Update timer every second
-            backupTimers[cardId] = setInterval(() => {
-                const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                const mins = Math.floor(elapsed / 60);
-                const secs = elapsed % 60;
-                if (elapsedSpan) {
-                    elapsedSpan.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+                const options = { method, headers: {} };
+                if (data) {
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(data);
                 }
-            }, 1000);
-        }
-        
-        function stopBackupTimer(cardId) {
-            const card = document.getElementById(cardId);
-            if (card) {
-                card.classList.remove('backup-active');
-            }
-            
-            if (backupTimers[cardId]) {
-                clearInterval(backupTimers[cardId]);
-                delete backupTimers[cardId];
+                const response = await fetch(url, options);
+                return await response.json();
+            } catch (e) {
+                console.error('API Error:', e);
+                return null;
             }
         }
         
-        function stopAllBackupTimers() {
-            ['vmBackupCard', 'appdataBackupCard', 'pluginsBackupCard', 'flashBackupCard'].forEach(cardId => {
-                stopBackupTimer(cardId);
-            });
-        }
-
-        // Backup functions
-        async function startVmBackup() {
-            const vmSelect = document.getElementById('vmSelect');
-            const vmName = vmSelect ? vmSelect.value : null;
-            const handling = document.getElementById('vmHandling')?.value || 'stop';
-            const compress = document.getElementById('vmCompress')?.checked ?? true;
-            const naming = document.getElementById('vmNaming')?.value || 'weekly';
+        // Card log management
+        function addCardLog(type, message, logType = 'normal') {
+            const logEl = document.getElementById(type + 'Log');
+            if (!logEl) return;
             
-            console.log('Starting VM Backup:', { vmName, handling, compress, naming });
+            const idle = logEl.querySelector('.log-idle');
+            if (idle) idle.remove();
             
-            if (!vmName) {
-                showToast('No VM selected', 'error');
-                return;
+            const line = document.createElement('div');
+            line.className = 'log-line' + (logType !== 'normal' ? ' ' + logType : '');
+            line.textContent = message;
+            logEl.appendChild(line);
+            logEl.scrollTop = logEl.scrollHeight;
+            
+            // Keep only last 50 lines
+            while (logEl.children.length > 50) {
+                logEl.removeChild(logEl.firstChild);
             }
+        }
+        
+        function clearCardLog(type) {
+            const logEl = document.getElementById(type + 'Log');
+            if (logEl) logEl.innerHTML = '<div class="log-idle">Waiting for user action…</div>';
+        }
+        
+        function setProgress(type, percent, status = 'running') {
+            const container = document.getElementById(type + 'Progress');
+            const fill = document.getElementById(type + 'ProgressFill');
+            const card = document.getElementById(type + 'Card');
             
-            setStatus(true, 'Backing up VM...');
-            startBackupTimer('vmBackupCard');
-            addActivityLine(`Starting VM backup: ${vmName}`);
+            container.classList.add('active');
+            fill.style.width = percent + '%';
+            fill.className = 'progress-fill' + (status === 'complete' ? ' complete' : status === 'error' ? ' error' : '');
             
-            const result = await apiCall('/api/backup/vm', 'POST', {
-                vm_name: vmName,
-                handling: handling,
-                compress: compress,
-                naming_scheme: naming
-            });
-            
-            if (result.success) {
-                showToast(result.message);
-                addActivityLine(result.message);
+            if (status === 'running') {
+                card.classList.add('running');
             } else {
-                showToast(result.error || 'Backup failed', 'error');
-                addActivityLine('ERROR: ' + (result.error || 'Backup failed'));
-                setStatus(false, 'Idle');
+                card.classList.remove('running');
+            }
+            
+            if (status === 'complete' || status === 'error') {
+                setTimeout(() => {
+                    container.classList.remove('active');
+                    fill.style.width = '0%';
+                }, 5000);
             }
         }
-
-        async function startAppdataBackup() {
-            const modeAll = document.getElementById('appdataModeAll');
-            const mode = modeAll && modeAll.checked ? 'all' : 'custom';
-            const naming = document.getElementById('appdataNaming')?.value || 'weekly';
+        
+        // Track current ETA for each backup
+        const backupETA = { vm: '', appdata: '', plugins: '', flash: '' };
+        
+        function setButtonState(type, running, eta = null) {
+            const btn = document.getElementById(type + 'BackupBtn');
+            const labels = {
+                'vm': '<i class="bi bi-play-fill me-1"></i>Start VM Backup',
+                'appdata': '<i class="bi bi-play-fill me-1"></i>Start Appdata Backup',
+                'plugins': '<i class="bi bi-play-fill me-1"></i>Start Plugins Backup',
+                'flash': '<i class="bi bi-shield-check me-1"></i>Start Flash Backup'
+            };
             
-            let folders = [];
-            if (mode === 'custom') {
-                document.querySelectorAll('.folder-check:checked').forEach(cb => {
-                    folders.push(cb.value);
-                });
-                
-                if (folders.length === 0) {
-                    showToast('Please select at least one folder', 'error');
-                    return;
+            if (running) {
+                btn.disabled = true;
+                if (eta) {
+                    backupETA[type] = eta;
+                    btn.innerHTML = `<i class="bi bi-hourglass-split me-1"></i>~${eta} remaining`;
+                } else if (backupETA[type]) {
+                    btn.innerHTML = `<i class="bi bi-hourglass-split me-1"></i>~${backupETA[type]} remaining`;
+                } else {
+                    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Starting...';
                 }
-            }
-            
-            console.log('Starting Appdata Backup:', { mode, folders, naming });
-            
-            setStatus(true, 'Backing up appdata...');
-            startBackupTimer('appdataBackupCard');
-            addActivityLine(`Starting appdata backup (${mode})`);
-            
-            const result = await apiCall('/api/backup/appdata', 'POST', {
-                mode: mode,
-                folders: folders,
-                naming_scheme: naming
-            });
-            
-            if (result.success) {
-                showToast(result.message);
-                addActivityLine(result.message);
             } else {
-                showToast(result.error || 'Backup failed', 'error');
-                addActivityLine('ERROR: ' + (result.error || 'Backup failed'));
-                setStatus(false, 'Idle');
+                btn.disabled = false;
+                btn.innerHTML = labels[type];
+                backupETA[type] = '';
             }
         }
-
-        async function startPluginsBackup() {
-            console.log('Starting Plugins Backup');
-            setStatus(true, 'Backing up plugins...');
-            startBackupTimer('pluginsBackupCard');
-            addActivityLine('Starting plugins backup');
+        
+        function updateGlobalStatus() {
+            const running = Object.values(backupState).some(s => s && s.active);
+            const dot = document.getElementById('globalStatus');
+            const text = document.getElementById('globalStatusText');
             
-            const result = await apiCall('/api/backup/plugins', 'POST', {
-                naming_scheme: 'weekly'
-            });
-            
-            if (result.success) {
-                showToast(result.message);
-                addActivityLine(result.message);
+            if (running) {
+                dot.classList.add('running');
+                text.textContent = 'Backup in progress';
             } else {
-                showToast(result.error || 'Backup failed', 'error');
-                addActivityLine('ERROR: ' + (result.error || 'Backup failed'));
-                setStatus(false, 'Idle');
+                dot.classList.remove('running');
+                text.textContent = 'Idle';
             }
         }
-
-        async function startFlashBackup() {
-            console.log('Starting Flash Backup');
-            setStatus(true, 'Backing up flash drive...');
-            startBackupTimer('flashBackupCard');
-            addActivityLine('Starting flash drive backup (disaster recovery)');
+        
+        // SSE connection for progress streaming
+        function connectSSE(type) {
+            if (eventSources[type]) {
+                eventSources[type].close();
+            }
             
-            const result = await apiCall('/api/backup/flash', 'POST', {
-                naming_scheme: 'weekly'
-            });
+            const es = new EventSource(`/api/backup/progress/${type}`);
+            eventSources[type] = es;
             
-            if (result.success) {
-                showToast(result.message, 'success');
-                addActivityLine(result.message);
+            es.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    backupState[type] = data;
+                    
+                    // Update progress bar
+                    if (data.percent !== undefined) {
+                        const status = data.complete ? 'complete' : data.error ? 'error' : 'running';
+                        setProgress(type, data.percent, status);
+                    }
+                    
+                    // Update button state with ETA
+                    if (!data.complete && !data.error) {
+                        setButtonState(type, true, data.eta || null);
+                    }
+                    
+                    // Add log line
+                    if (data.log) {
+                        const logType = data.error ? 'error' : data.complete ? 'success' : 'normal';
+                        addCardLog(type, data.log, logType);
+                    }
+                    
+                    // Handle completion or error
+                    if (data.complete || data.error) {
+                        setButtonState(type, false);
+                        es.close();
+                        eventSources[type] = null;
+                        loadStats();
+                    }
+                    
+                    updateGlobalStatus();
+                } catch (e) {
+                    console.error('SSE parse error:', e);
+                }
+            };
+            
+            es.onerror = function() {
+                console.log('SSE connection closed for', type);
+                es.close();
+                eventSources[type] = null;
+                setButtonState(type, false);
+                updateGlobalStatus();
+            };
+        }
+        
+        // Start backup
+        async function startBackup(type) {
+            clearCardLog(type);
+            addCardLog(type, 'Initiating backup...');
+            setButtonState(type, true);
+            setProgress(type, 5);
+            
+            let endpoint, data;
+            
+            switch (type) {
+                case 'vm':
+                    endpoint = '/api/backup/vm';
+                    data = {
+                        vm_name: document.getElementById('vmSelect').value,
+                        handling: document.getElementById('vmHandling').value,
+                        compress: document.getElementById('vmCompress').checked,
+                        naming_scheme: 'weekly'
+                    };
+                    break;
+                case 'appdata':
+                    endpoint = '/api/backup/appdata';
+                    data = {
+                        mode: document.querySelector('input[name="appdataMode"]:checked').value,
+                        naming_scheme: 'weekly'
+                    };
+                    break;
+                case 'plugins':
+                    endpoint = '/api/backup/plugins';
+                    data = { naming_scheme: 'weekly' };
+                    break;
+                case 'flash':
+                    endpoint = '/api/backup/flash';
+                    data = { naming_scheme: 'weekly' };
+                    break;
+            }
+            
+            const result = await apiCall(endpoint, 'POST', data);
+            
+            if (result && result.success) {
+                addCardLog(type, result.message, 'success');
+                connectSSE(type);
             } else {
-                showToast(result.error || 'Backup failed', 'error');
-                addActivityLine('ERROR: ' + (result.error || 'Backup failed'));
-                setStatus(false, 'Idle');
+                addCardLog(type, 'Error: ' + (result?.error || 'Unknown error'), 'error');
+                setProgress(type, 100, 'error');
+                setButtonState(type, false);
             }
         }
-
-        // Schedule
+        
+        function toggleDay(btn) { btn.classList.toggle('active'); }
+        
         async function saveSchedule() {
             const days = [];
-            document.querySelectorAll('.schedule-day:checked').forEach(cb => {
-                days.push(cb.value);
-            });
+            document.querySelectorAll('.day-btn.active').forEach(btn => days.push(btn.dataset.day));
             
             const schedule = {
                 enabled: document.getElementById('scheduleEnabled').checked,
@@ -1149,253 +596,107 @@
             };
             
             const result = await apiCall('/api/schedule', 'POST', schedule);
-            
-            if (result.success) {
-                showToast('Schedule saved successfully');
-            } else {
-                showToast('Failed to save schedule', 'error');
-            }
+            if (result?.success) alert('Schedule saved!');
         }
-
-        // Settings
+        
         async function saveSettings() {
+            const excluded = [];
+            document.querySelectorAll('#excludeFoldersList input:checked').forEach(cb => excluded.push(cb.value));
+            
             const settings = {
                 max_backups: parseInt(document.getElementById('maxBackups').value),
-                naming_scheme: document.getElementById('defaultNaming').value
+                naming_scheme: document.getElementById('defaultNaming').value,
+                compression_level: parseInt(document.getElementById('compressionLevel').value),
+                verify_backups: document.getElementById('verifyBackups').checked,
+                incremental_enabled: document.getElementById('incrementalEnabled').checked,
+                exclude_folders: excluded
             };
             
             const result = await apiCall('/api/settings', 'POST', settings);
-            
-            if (result.success) {
-                showToast('Settings saved successfully');
+            if (result?.success) alert('Settings saved!');
+        }
+        
+        async function loadVMs() {
+            const select = document.getElementById('vmSelect');
+            const vms = await apiCall('/api/vms');
+            if (vms?.length > 0) {
+                select.innerHTML = vms.map(vm => `<option value="${escapeHtml(vm.name)}">${escapeHtml(vm.name)} (${escapeHtml(vm.state)})</option>`).join('');
             } else {
-                showToast('Failed to save settings', 'error');
+                select.innerHTML = '<option>No VMs found</option>';
             }
         }
-
-        // Logs
+        
+        async function loadFolders() {
+            const folders = await apiCall('/api/folders');
+            const countEl = document.getElementById('folderCount');
+            const listEl = document.getElementById('folderList');
+            const excludeEl = document.getElementById('excludeFoldersList');
+            
+            if (folders?.length > 0) {
+                countEl.textContent = folders.length;
+                listEl.innerHTML = folders.map((f, i) => `<div class="form-check"><input class="form-check-input" type="checkbox" value="${escapeHtml(f.name)}" id="folder_${i}"><label class="form-check-label small" for="folder_${i}">${escapeHtml(f.name)}</label></div>`).join('');
+                excludeEl.innerHTML = folders.map((f, i) => `<div class="form-check"><input class="form-check-input" type="checkbox" value="${escapeHtml(f.name)}" id="exclude_${i}" ${f.excluded ? 'checked' : ''}><label class="form-check-label small" for="exclude_${i}">${escapeHtml(f.name)}</label></div>`).join('');
+            }
+        }
+        
+        async function loadStats() {
+            const stats = await apiCall('/api/stats');
+            if (stats) {
+                if (stats.last_vm_backup) document.getElementById('statsLastVm').textContent = new Date(stats.last_vm_backup).toLocaleDateString();
+                if (stats.last_appdata_backup) document.getElementById('statsLastAppdata').textContent = new Date(stats.last_appdata_backup).toLocaleDateString();
+                document.getElementById('statsTotalSize').textContent = stats.total_backup_size_formatted || '0.0 B';
+                document.getElementById('statsNextScheduled').textContent = stats.next_scheduled || '—';
+            }
+        }
+        
+        async function refreshBackupList() {
+            const backups = await apiCall('/api/backups');
+            if (!backups) return;
+            
+            ['vm', 'appdata', 'plugins', 'flash'].forEach(type => {
+                const el = document.getElementById(type + 'BackupsList');
+                const list = backups[type === 'vm' ? 'vms' : type];
+                
+                if (!list?.length) {
+                    el.innerHTML = '<p class="text-muted small p-3 m-0">No backups found</p>';
+                } else {
+                    el.innerHTML = `<div class="backup-list-header"><span>Name</span><span>Date</span><span>Size</span><span></span></div>` +
+                        list.map(b => `<div class="backup-list-item"><span class="text-truncate">${escapeHtml(b.name)}</span><span class="text-muted">${b.date}</span><span class="text-muted">${b.size}</span><button class="btn btn-outline-secondary btn-sm" onclick="restoreBackup('${type}','${escapeHtml(b.path||b.name)}')">Restore</button></div>`).join('');
+                }
+            });
+        }
+        
         async function refreshLog() {
             const result = await apiCall('/api/log?lines=100');
-            const container = document.getElementById('logContainer');
-            
-            if (result.log && result.log.length > 0) {
-                container.innerHTML = result.log.map(line => 
-                    `<p class="log-line">${escapeHtml(line)}</p>`
-                ).join('');
-                container.scrollTop = container.scrollHeight;
-            } else {
-                container.innerHTML = '<p class="text-muted">No log entries yet</p>';
+            const el = document.getElementById('fullLog');
+            if (result?.log) {
+                el.innerHTML = result.log.map(line => `<div class="log-line">${escapeHtml(line)}</div>`).join('');
+                el.scrollTop = el.scrollHeight;
             }
         }
         
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+        async function restoreBackup(type, file) {
+            if (!confirm('Restore from this backup?')) return;
+            const result = await apiCall(`/api/restore/${type}`, 'POST', { backup_file: file });
+            alert(result?.message || result?.error || 'Restore initiated');
         }
         
-        function clearActivityLog() {
-            const container = document.getElementById('activityLog');
-            container.innerHTML = '<p class="text-muted p-3 m-0">Waiting for backup activity...</p>';
-        }
-        
-        function addActivityLine(text) {
-            const container = document.getElementById('activityLog');
-            const indicator = document.getElementById('activityIndicator');
-            
-            // Remove placeholder text if present
-            if (container.querySelector('.text-muted')) {
-                container.innerHTML = '';
-            }
-            
-            const p = document.createElement('p');
-            p.className = 'log-line px-3 py-1 m-0';
-            p.textContent = text;
-            container.appendChild(p);
-            container.scrollTop = container.scrollHeight;
-            
-            // Update indicator
-            if (indicator) {
-                indicator.className = 'status-indicator status-running me-2';
-            }
-            
-            // Check if backup finished and stop appropriate timer
-            const textLower = text.toLowerCase();
-            if (textLower.includes('finished successfully') || textLower.includes('completed') || textLower.includes('failed')) {
-                if (indicator) {
-                    indicator.className = 'status-indicator status-idle me-2';
-                }
-                setStatus(false, 'Idle');
-                
-                // Stop the appropriate backup timer based on the message
-                if (textLower.includes('vm backup')) {
-                    stopBackupTimer('vmBackupCard');
-                } else if (textLower.includes('appdata')) {
-                    stopBackupTimer('appdataBackupCard');
-                } else if (textLower.includes('plugin')) {
-                    stopBackupTimer('pluginsBackupCard');
-                } else if (textLower.includes('flash')) {
-                    stopBackupTimer('flashBackupCard');
-                } else {
-                    // If we can't determine which, stop all
-                    stopAllBackupTimers();
-                }
-            }
-        }
-
-        // Log streaming via SSE
-        function startLogStream() {
-            const evtSource = new EventSource('/api/log/stream');
-            const container = document.getElementById('logContainer');
-            
-            evtSource.onmessage = function(event) {
-                // Update main log container
-                const p = document.createElement('p');
-                p.className = 'log-line';
-                p.textContent = event.data;
-                container.appendChild(p);
-                container.scrollTop = container.scrollHeight;
-                
-                // Also update activity log on Backup tab
-                addActivityLine(event.data);
-            };
-            
-            evtSource.onerror = function() {
-                console.log('SSE connection lost, reconnecting...');
-                setTimeout(startLogStream, 3000);
-            };
-        }
-
-        // Initialize
+        // Init
         document.addEventListener('DOMContentLoaded', function() {
-            refreshLog();
-            startLogStream();
+            loadVMs();
+            loadFolders();
+            loadStats();
             
-            // Load all dynamic data asynchronously - don't block page render
-            setTimeout(function() {
-                loadVMs();
-                loadFolders();
-                refreshBackupList();
-            }, 100);
-            
-            // Also refresh when Restore tab is clicked
-            document.querySelector('button[data-bs-target="#restore"]').addEventListener('click', function() {
-                refreshBackupList();
+            document.querySelectorAll('input[name="appdataMode"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    document.getElementById('folderListContainer').style.display = this.value === 'custom' ? 'block' : 'none';
+                });
             });
+            
+            document.querySelector('button[data-bs-target="#restore"]').addEventListener('click', refreshBackupList);
+            document.querySelector('button[data-bs-target="#logs"]').addEventListener('click', refreshLog);
+            document.querySelector('button[data-bs-target="#settings"]').addEventListener('click', loadFolders);
         });
-        
-        // Load VMs via AJAX
-        async function loadVMs() {
-            console.log('Loading VMs...');
-            const select = document.getElementById('vmSelect');
-            
-            try {
-                const vms = await apiCall('/api/vms');
-                console.log('VMs:', vms);
-                
-                if (vms && vms.length > 0) {
-                    select.innerHTML = vms.map(vm => 
-                        `<option value="${escapeHtml(vm.name)}">${escapeHtml(vm.name)} (${escapeHtml(vm.state)})</option>`
-                    ).join('');
-                } else {
-                    select.innerHTML = '<option value="">No VMs found</option>';
-                }
-            } catch (e) {
-                console.error('Error loading VMs:', e);
-                select.innerHTML = '<option value="">Error loading VMs</option>';
-            }
-        }
-        
-        // Load appdata folders via AJAX
-        async function loadFolders() {
-            console.log('Loading folders...');
-            const container = document.getElementById('folderList');
-            const countSpan = document.getElementById('folderCount');
-            
-            try {
-                const folders = await apiCall('/api/folders');
-                console.log('Folders:', folders);
-                
-                if (folders && folders.length > 0) {
-                    countSpan.textContent = folders.length;
-                    container.innerHTML = folders.map((folder, idx) => `
-                        <div class="form-check">
-                            <input class="form-check-input folder-check" type="checkbox" value="${escapeHtml(folder.name)}" id="folder_${idx}">
-                            <label class="form-check-label" for="folder_${idx}">${escapeHtml(folder.name)}</label>
-                        </div>
-                    `).join('');
-                } else {
-                    countSpan.textContent = '0';
-                    container.innerHTML = '<p class="text-muted">No folders found</p>';
-                }
-            } catch (e) {
-                console.error('Error loading folders:', e);
-                countSpan.textContent = '?';
-                container.innerHTML = '<p class="text-muted">Error loading folders</p>';
-            }
-        }
-        
-        // Refresh backup list via AJAX
-        async function refreshBackupList() {
-            console.log('Refreshing backup list...');
-            
-            // Show loading state
-            ['vmBackupsList', 'appdataBackupsList', 'pluginsBackupsList', 'flashBackupsList'].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.innerHTML = '<p class="text-muted">Loading...</p>';
-            });
-            
-            const result = await apiCall('/api/backups');
-            console.log('Backups:', result);
-            
-            // Render VM backups
-            renderBackupList('vmBackupsList', result.vms, 'No VM backups found');
-            
-            // Render Appdata backups
-            renderBackupList('appdataBackupsList', result.appdata, 'No appdata backups found');
-            
-            // Render Plugin backups
-            renderBackupList('pluginsBackupsList', result.plugins, 'No plugin backups found');
-            
-            // Render Flash backups with special note
-            renderBackupList('flashBackupsList', result.flash, 'No flash backups found', true);
-        }
-        
-        function renderBackupList(containerId, backups, emptyMessage, isFlash = false) {
-            const container = document.getElementById(containerId);
-            if (!container) return;
-            
-            if (!backups || backups.length === 0) {
-                container.innerHTML = `<p class="text-muted">${emptyMessage}</p>` + 
-                    (isFlash ? '<p class="small text-muted">Flash backups are critical for disaster recovery!</p>' : '');
-                return;
-            }
-            
-            let html = '<div class="list-group list-group-flush">';
-            backups.forEach(backup => {
-                html += `
-                    <div class="list-group-item bg-transparent text-light d-flex justify-content-between align-items-center">
-                        <div>
-                            <small class="d-block">${escapeHtml(backup.name)}</small>
-                            <small class="text-muted">${backup.date} • ${backup.size}</small>
-                        </div>
-                        <button class="btn btn-sm btn-outline-primary">Restore</button>
-                    </div>
-                `;
-            });
-            html += '</div>';
-            
-            if (isFlash) {
-                html += `
-                    <div class="alert alert-secondary mt-3 mb-0 small">
-                        <i class="bi bi-info-circle me-1"></i>
-                        To restore: Extract to new USB flash drive
-                    </div>
-                `;
-            }
-            
-            container.innerHTML = html;
-        }
     </script>
 </body>
 </html>

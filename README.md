@@ -1,51 +1,71 @@
-# Backup Unraid State - Docker Edition
+# Backup Unraid State
 
 A modern, clean web interface for backing up your Unraid server's critical data including VMs, Docker appdata, plugin configurations, and USB flash drive for disaster recovery.
 
-![Docker Pulls](https://img.shields.io/docker/pulls/msw3msw/backup-unraid-state)
-![GitHub](https://img.shields.io/github/license/msw3msw/backup-unraid-state)
+![Docker Pulls](https://img.shields.io/docker/pulls/msw3msw/backup-unraid-state) ![GitHub](https://img.shields.io/github/license/msw3msw/backup-unraid-state)
 
 ## Features
 
 ### Backup Types
+
 - **VM Backups** - Full virtual machine disk images with stop or live backup options, automatic compression
 - **Appdata Backups** - All Docker container data with smart exclusions (cache, logs, temp files) or selective folder backup
 - **Plugin Backups** - Complete plugin configurations from /boot/config/plugins
 - **Flash Drive Backups** - Critical disaster recovery backup including array config, network settings, user accounts, shares, SSL certs, and license key
 
+### Real-Time Progress Tracking
+
+- **Folder-by-folder progress** - See exactly which folder is being backed up: `[5/27] Backing up: plex`
+- **ETA countdown** - Button shows estimated time remaining: `~3m 20s remaining`
+- **Progress bars** - Visual progress indicator on each backup card
+- **Card-scoped logs** - Each backup card has its own activity log (no context switching)
+- **Server-Sent Events (SSE)** - Live updates without polling
+
 ### Scheduling & Automation
+
 - Flexible scheduling (daily/weekly/monthly)
 - Choose specific days of the week
 - Automatic backup rotation (configurable retention)
 - Cron-based reliability
 
 ### Web Interface
-- Clean, modern dark theme matching Unraid's style
-- Real-time backup progress with elapsed time counter
-- Live activity log with Server-Sent Events
-- Green pulse animation on active backups
-- Instant page loading (fully async)
 
-### Smart Features
-- Week/day/month-based naming schemes (week01, day3_week15, January_2025)
-- Automatic old backup cleanup
-- Intelligent exclusions for cache, logs, and temp files
-- Detailed restore instructions generated with flash backups
-- VM path translation for Docker container compatibility
+- Clean, modern dark theme matching Unraid's style
+- 2x2 card grid layout for all backup types
+- Green border/glow animation on active backups
+- Instant page loading (fully async)
+- Mobile responsive design
+
+---
 
 ## Installation
 
-### Option 1: Unraid Docker UI
+### Option 1: Unraid Template (Easiest)
 
-1. In Unraid, go to **Docker** → **Add Container**
-2. Set **Repository** to: `msw3msw/backup-unraid-state:latest`
-3. Set **Privileged** to: `ON`
-4. Add the port mapping: Container Port `5000` → Host Port `5050`
-5. Add the volume mappings (see below)
-6. Click **Apply**
-7. Access web UI at: `http://[YOUR-UNRAID-IP]:5050`
+**One-time setup to add the template:**
+
+1. Open Unraid terminal (or SSH)
+2. Run this command to download the template:
+   ```bash
+   wget -O /boot/config/plugins/dockerMan/templates-user/my-BackupUnraidState.xml \
+     https://raw.githubusercontent.com/msw3msw/backup-unraid-state/main/unraid-template.xml
+   ```
+3. Go to **Docker → Add Container**
+4. Select **BackupUnraidState** from the Template dropdown
+5. Set your **Backup Destination** path (REQUIRED - use a remote/NAS share!)
+6. Adjust timezone if needed
+7. Click **Apply**
+8. Access web UI at: `http://[YOUR-UNRAID-IP]:5050`
+
+**Or manually download:**
+1. Download [unraid-template.xml](https://raw.githubusercontent.com/msw3msw/backup-unraid-state/main/unraid-template.xml)
+2. Copy to: `/boot/config/plugins/dockerMan/templates-user/my-BackupUnraidState.xml`
+3. Go to Docker → Add Container and select from Template dropdown
+
+---
 
 ### Option 2: Docker Compose
+
 ```yaml
 version: '3.8'
 
@@ -58,7 +78,7 @@ services:
       - "5050:5000"
     volumes:
       - /mnt/user/appdata/backup-unraid-state:/config
-      - /mnt/remotes/YOUR_NAS/backups:/backup
+      - /mnt/remotes/YOUR_NAS/backups:/backup    # CHANGE THIS!
       - /mnt/user/domains:/domains:ro
       - /mnt/user/appdata:/appdata:ro
       - /boot/config/plugins:/plugins:ro
@@ -70,24 +90,39 @@ services:
     restart: unless-stopped
 ```
 
+---
+
+### Option 3: Unraid Docker UI (Manual)
+
+1. Go to **Docker → Add Container**
+2. Set **Repository**: `msw3msw/backup-unraid-state:latest`
+3. Set **Privileged**: `ON`
+4. Add port: `5050` → `5000/tcp`
+5. Add all volume mappings (see table below)
+6. Click **Apply**
+
+---
+
 ## Volume Mappings
 
 | Container Path | Host Path | Mode | Description |
 |----------------|-----------|------|-------------|
-| /config | /mnt/user/appdata/backup-unraid-state | RW | Config & logs |
-| /backup | Your backup destination | RW | Where backups are stored |
-| /domains | /mnt/user/domains | RO | VM disk images |
-| /appdata | /mnt/user/appdata | RO | Docker container data |
-| /plugins | /boot/config/plugins | RO | Plugin configs |
-| /boot | /boot | RO | USB flash drive |
-| /var/run/libvirt/libvirt-sock | /var/run/libvirt/libvirt-sock | RW | VM control socket |
+| `/config` | `/mnt/user/appdata/backup-unraid-state` | RW | Config & logs |
+| `/backup` | **Your backup destination** | RW | Where backups are stored |
+| `/domains` | `/mnt/user/domains` | RO | VM disk images |
+| `/appdata` | `/mnt/user/appdata` | RO | Docker container data |
+| `/plugins` | `/boot/config/plugins` | RO | Plugin configs |
+| `/boot` | `/boot` | RO | USB flash drive |
+| `/var/run/libvirt/libvirt-sock` | `/var/run/libvirt/libvirt-sock` | RW | VM control socket |
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| TZ | America/New_York | Your timezone for scheduled backups |
-| MAX_BACKUPS | 2 | Number of backup copies to keep per item |
+| `TZ` | `America/New_York` | Your timezone for scheduled backups |
+| `MAX_BACKUPS` | `2` | Number of backup copies to keep per item |
+
+---
 
 ## Important Notes
 
@@ -104,26 +139,57 @@ services:
 - SSL certificates
 - License key
 
+---
+
+## Screenshots
+
+### Backup Now Tab
+- 2x2 grid of backup cards (VM, Appdata, Plugins, Flash)
+- Each card shows: controls, progress bar, activity log
+- Real-time ETA countdown on buttons during backup
+
+### Progress Example
+```
+Button: [⏳ ~2m 15s remaining]
+Progress: ████████████░░░░░░░░ 58%
+Log:
+  [14/27] Backing up: radarr
+  [15/27] Backing up: sonarr
+  [16/27] Backing up: plex
+```
+
+---
+
 ## Restore Instructions
 
 ### VM Restore
-1. Extract the .tar.gz backup
-2. Copy the vdisk image to /mnt/user/domains/[VM_NAME]/
+1. Extract the `.tar.gz` backup
+2. Copy the vdisk image to `/mnt/user/domains/[VM_NAME]/`
 3. Import the VM XML from the metadata file
 
 ### Appdata Restore
 1. Stop the Docker container
-2. Extract the backup to /mnt/user/appdata/
+2. Extract the backup to `/mnt/user/appdata/`
 3. Start the container
 
 ### Flash Drive Restore (Disaster Recovery)
 1. Create a new Unraid USB using the USB Creator tool
 2. Mount the USB on a computer
-3. Extract the flash backup to the USB /boot directory
+3. Extract the flash backup to the USB `/boot` directory
 4. If USB GUID changed, reactivate your license at unraid.net
 5. Boot from the new USB - your array configuration should be intact
 
+---
+
 ## Changelog
+
+### v2.0
+- **Real-time folder progress** - See which folder is being backed up
+- **ETA countdown** - Estimated time remaining on backup button
+- **Progress bars** - Visual progress on each backup card
+- **Card-scoped logs** - Each backup type has its own log panel
+- **SSE streaming** - Live updates via Server-Sent Events
+- **Unraid template** - Easy one-command installation
 
 ### v1.4
 - UI polish: symmetrical cards, green pulse animation on active backups
@@ -141,11 +207,12 @@ services:
 ### v1.0
 - Initial release
 
+---
+
 ## License
 
-MIT License
+MIT License - See LICENSE file for details
 
-## Support
+## Contributing
 
-- [GitHub Issues](https://github.com/msw3msw/backup-unraid-state/issues)
-- [Docker Hub](https://hub.docker.com/r/msw3msw/backup-unraid-state)
+Issues and pull requests welcome at [GitHub](https://github.com/msw3msw/backup-unraid-state)

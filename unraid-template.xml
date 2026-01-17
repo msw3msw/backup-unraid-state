@@ -8,28 +8,42 @@
     <Support>https://github.com/msw3msw/backup-unraid-state/issues</Support>
     <Project>https://github.com/msw3msw/backup-unraid-state</Project>
     <Overview>
-Backup Unraid State provides a clean web interface for backing up your VMs, Docker appdata, plugin configurations, and USB flash drive.
+Backup Unraid State v2.0 - A modern web interface for backing up your Unraid server.
 
-Features:
-- VM backups with stop or live options
-- Appdata backups (all or selective folders)
+BACKUP TYPES:
+- VM backups (stop or live mode)
+- Appdata backups (all or selective folders)  
 - Plugin configuration backups
 - Flash drive backup (disaster recovery)
-- Scheduled automated backups
+
+NEW IN v2.0:
+- Real-time folder progress: See which folder is being backed up
+- ETA countdown: Estimated time remaining on backup button
+- Progress bars: Visual progress on each backup card
+- Card-scoped logs: Each backup has its own activity log
+
+FEATURES:
+- Scheduled automated backups (daily/weekly/monthly)
 - Week/day/month naming schemes
-- Automatic rotation (configurable)
+- Automatic rotation and cleanup
 - Smart exclusions (cache, logs, temp files)
-- Real-time backup progress with elapsed time
+- Backup verification
 - Clean modern dark web interface
 
 Access the web UI at http://[IP]:[PORT:5050]/
     </Overview>
-    <Category>Backup:</Category>
+    <Category>Backup: Tools:</Category>
     <WebUI>http://[IP]:[PORT:5050]/</WebUI>
     <TemplateURL>https://raw.githubusercontent.com/msw3msw/backup-unraid-state/main/unraid-template.xml</TemplateURL>
     <Icon>https://raw.githubusercontent.com/msw3msw/backup-unraid-state/main/icon.png</Icon>
+    <ExtraParams></ExtraParams>
+    <PostArgs></PostArgs>
+    <CPUset></CPUset>
     <DateInstalled></DateInstalled>
-    <Description>Backup Unraid State - A modern web interface for VM, appdata, plugin, and flash drive backups with scheduling support.</Description>
+    <DonateText>Support Development</DonateText>
+    <DonateLink></DonateLink>
+    <Requires></Requires>
+    <Description>Backup Unraid State v2.0 - Modern web interface for VM, appdata, plugin, and flash drive backups. Features real-time progress tracking, ETA countdown, and scheduled automation.</Description>
     
     <!-- Web UI Port -->
     <Config 
@@ -37,7 +51,7 @@ Access the web UI at http://[IP]:[PORT:5050]/
         Target="5000" 
         Default="5050" 
         Mode="tcp" 
-        Description="Port for the web interface. Access at http://[UNRAID_IP]:[PORT]" 
+        Description="Port for the web interface. Access at http://[UNRAID_IP]:5050" 
         Type="Port" 
         Display="always" 
         Required="true" 
@@ -61,7 +75,7 @@ Access the web UI at http://[IP]:[PORT:5050]/
         Target="/backup" 
         Default="" 
         Mode="rw" 
-        Description="REQUIRED: Where to store backups. Use a remote/NAS share like /mnt/remotes/NAS/backups or a separate disk. Do NOT use the array you're backing up!" 
+        Description="REQUIRED: Where to store backups. Use a remote/NAS share (e.g., /mnt/remotes/NAS/backups) or separate disk. Do NOT use the array you're backing up!" 
         Type="Path" 
         Display="always" 
         Required="true" 
@@ -73,7 +87,7 @@ Access the web UI at http://[IP]:[PORT:5050]/
         Target="/domains" 
         Default="/mnt/user/domains" 
         Mode="ro" 
-        Description="Where your VM disk images are stored (usually /mnt/user/domains)" 
+        Description="Where your VM disk images are stored" 
         Type="Path" 
         Display="always" 
         Required="true" 
@@ -84,7 +98,7 @@ Access the web UI at http://[IP]:[PORT:5050]/
         Target="/appdata" 
         Default="/mnt/user/appdata" 
         Mode="ro" 
-        Description="Where your Docker container data is stored (usually /mnt/user/appdata)" 
+        Description="Where your Docker container data is stored" 
         Type="Path" 
         Display="always" 
         Required="true" 
@@ -95,7 +109,7 @@ Access the web UI at http://[IP]:[PORT:5050]/
         Target="/plugins" 
         Default="/boot/config/plugins" 
         Mode="ro" 
-        Description="Plugin configuration location (usually /boot/config/plugins)" 
+        Description="Plugin configuration location" 
         Type="Path" 
         Display="always" 
         Required="false" 
@@ -106,31 +120,31 @@ Access the web UI at http://[IP]:[PORT:5050]/
         Target="/boot" 
         Default="/boot" 
         Mode="ro" 
-        Description="USB flash drive path for disaster recovery backup (usually /boot)" 
+        Description="USB flash drive path for disaster recovery backup" 
         Type="Path" 
         Display="always" 
         Required="true" 
         Mask="false">/boot</Config>
     
-    <!-- Libvirt Socket (required for VM control) -->
+    <!-- Libvirt Socket -->
     <Config 
         Name="Libvirt Socket" 
         Target="/var/run/libvirt/libvirt-sock" 
         Default="/var/run/libvirt/libvirt-sock" 
         Mode="rw" 
-        Description="Libvirt socket for VM control - required for stopping/starting VMs during backup" 
+        Description="Libvirt socket for VM control (stop/start VMs during backup)" 
         Type="Path" 
         Display="advanced" 
         Required="true" 
         Mask="false">/var/run/libvirt/libvirt-sock</Config>
     
-    <!-- Settings -->
+    <!-- Environment Variables -->
     <Config 
         Name="Max Backups to Keep" 
         Target="MAX_BACKUPS" 
         Default="2" 
         Mode="" 
-        Description="Number of backup copies to keep per item (older ones are auto-deleted)" 
+        Description="Number of backup copies to keep per item (older ones auto-deleted)" 
         Type="Variable" 
         Display="always" 
         Required="false" 
