@@ -1,0 +1,149 @@
+<?xml version="1.0"?>
+<Container version="2">
+    <Name>BackupUnraidState</Name>
+    <Repository>msw3msw/backup-unraid-state:latest</Repository>
+    <Registry>https://hub.docker.com/r/msw3msw/backup-unraid-state</Registry>
+    <Network>bridge</Network>
+    <Privileged>true</Privileged>
+    <Support>https://github.com/msw3msw/backup-unraid-state/issues</Support>
+    <Project>https://github.com/msw3msw/backup-unraid-state</Project>
+    <Overview>
+Backup Unraid State provides a clean web interface for backing up your VMs, Docker appdata, plugin configurations, and USB flash drive.
+
+Features:
+- VM backups with stop or live options
+- Appdata backups (all or selective folders)
+- Plugin configuration backups
+- Flash drive backup (disaster recovery)
+- Scheduled automated backups
+- Week/day/month naming schemes
+- Automatic rotation (configurable)
+- Smart exclusions (cache, logs, temp files)
+- Real-time backup progress with elapsed time
+- Clean modern dark web interface
+
+Access the web UI at http://[IP]:[PORT:5050]/
+    </Overview>
+    <Category>Backup:</Category>
+    <WebUI>http://[IP]:[PORT:5050]/</WebUI>
+    <TemplateURL>https://raw.githubusercontent.com/msw3msw/backup-unraid-state/main/unraid-template.xml</TemplateURL>
+    <Icon>https://raw.githubusercontent.com/msw3msw/backup-unraid-state/main/icon.png</Icon>
+    <DateInstalled></DateInstalled>
+    <Description>Backup Unraid State - A modern web interface for VM, appdata, plugin, and flash drive backups with scheduling support.</Description>
+    
+    <!-- Web UI Port -->
+    <Config 
+        Name="Web UI Port" 
+        Target="5000" 
+        Default="5050" 
+        Mode="tcp" 
+        Description="Port for the web interface. Access at http://[UNRAID_IP]:[PORT]" 
+        Type="Port" 
+        Display="always" 
+        Required="true" 
+        Mask="false">5050</Config>
+    
+    <!-- Config Storage -->
+    <Config 
+        Name="Config Directory" 
+        Target="/config" 
+        Default="/mnt/user/appdata/backup-unraid-state" 
+        Mode="rw" 
+        Description="Where to store configuration files and logs" 
+        Type="Path" 
+        Display="always" 
+        Required="true" 
+        Mask="false">/mnt/user/appdata/backup-unraid-state</Config>
+    
+    <!-- IMPORTANT: Backup Destination -->
+    <Config 
+        Name="Backup Destination" 
+        Target="/backup" 
+        Default="" 
+        Mode="rw" 
+        Description="REQUIRED: Where to store backups. Use a remote/NAS share like /mnt/remotes/NAS/backups or a separate disk. Do NOT use the array you're backing up!" 
+        Type="Path" 
+        Display="always" 
+        Required="true" 
+        Mask="false"></Config>
+    
+    <!-- Source Paths -->
+    <Config 
+        Name="VM Storage Path" 
+        Target="/domains" 
+        Default="/mnt/user/domains" 
+        Mode="ro" 
+        Description="Where your VM disk images are stored (usually /mnt/user/domains)" 
+        Type="Path" 
+        Display="always" 
+        Required="true" 
+        Mask="false">/mnt/user/domains</Config>
+    
+    <Config 
+        Name="Appdata Path" 
+        Target="/appdata" 
+        Default="/mnt/user/appdata" 
+        Mode="ro" 
+        Description="Where your Docker container data is stored (usually /mnt/user/appdata)" 
+        Type="Path" 
+        Display="always" 
+        Required="true" 
+        Mask="false">/mnt/user/appdata</Config>
+    
+    <Config 
+        Name="Plugin Configs Path" 
+        Target="/plugins" 
+        Default="/boot/config/plugins" 
+        Mode="ro" 
+        Description="Plugin configuration location (usually /boot/config/plugins)" 
+        Type="Path" 
+        Display="always" 
+        Required="false" 
+        Mask="false">/boot/config/plugins</Config>
+    
+    <Config 
+        Name="Flash Drive Path" 
+        Target="/boot" 
+        Default="/boot" 
+        Mode="ro" 
+        Description="USB flash drive path for disaster recovery backup (usually /boot)" 
+        Type="Path" 
+        Display="always" 
+        Required="true" 
+        Mask="false">/boot</Config>
+    
+    <!-- Libvirt Socket (required for VM control) -->
+    <Config 
+        Name="Libvirt Socket" 
+        Target="/var/run/libvirt/libvirt-sock" 
+        Default="/var/run/libvirt/libvirt-sock" 
+        Mode="rw" 
+        Description="Libvirt socket for VM control - required for stopping/starting VMs during backup" 
+        Type="Path" 
+        Display="advanced" 
+        Required="true" 
+        Mask="false">/var/run/libvirt/libvirt-sock</Config>
+    
+    <!-- Settings -->
+    <Config 
+        Name="Max Backups to Keep" 
+        Target="MAX_BACKUPS" 
+        Default="2" 
+        Mode="" 
+        Description="Number of backup copies to keep per item (older ones are auto-deleted)" 
+        Type="Variable" 
+        Display="always" 
+        Required="false" 
+        Mask="false">2</Config>
+    
+    <Config 
+        Name="Timezone" 
+        Target="TZ" 
+        Default="America/New_York" 
+        Mode="" 
+        Description="Your timezone for scheduled backups (e.g., America/New_York, Europe/London, Australia/Sydney)" 
+        Type="Variable" 
+        Display="always" 
+        Required="false" 
+        Mask="false">America/New_York</Config>
+</Container>

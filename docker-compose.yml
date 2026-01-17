@@ -1,0 +1,40 @@
+# Backup Unraid State - Docker Compose
+# For easy deployment and testing
+
+version: '3.8'
+
+services:
+  backup-unraid-state:
+    build: .
+    container_name: backup-unraid-state
+    privileged: true
+    ports:
+      - "5050:5000"
+    volumes:
+      # Config and logs (persistent)
+      - /mnt/user/appdata/backup-unraid-state:/config
+      
+      # Backup destination (CHANGE THIS to your backup location)
+      - /mnt/remotes/SOLYAH_Unraid/backup_weekly:/backup
+      
+      # Source paths (read-only)
+      - /mnt/user/domains:/domains:ro
+      - /mnt/user/appdata:/appdata:ro
+      - /boot/config/plugins:/plugins:ro
+      - /boot:/boot:ro
+      
+      # Libvirt socket for VM control
+      - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
+    
+    environment:
+      - MAX_BACKUPS=2
+      - TZ=Australia/Melbourne
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
