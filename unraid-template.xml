@@ -8,7 +8,7 @@
     <Support>https://github.com/msw3msw/backup-unraid-state/issues</Support>
     <Project>https://github.com/msw3msw/backup-unraid-state</Project>
     <Overview>
-Backup Unraid State v2.0 - A modern web interface for backing up your Unraid server.
+Backup Unraid State v2.1 - A modern web interface for backing up your Unraid server.
 
 BACKUP TYPES:
 - VM backups (stop or live mode)
@@ -16,19 +16,16 @@ BACKUP TYPES:
 - Plugin configuration backups
 - Flash drive backup (disaster recovery)
 
-NEW IN v2.0:
-- Real-time folder progress: See which folder is being backed up
-- ETA countdown: Estimated time remaining on backup button
-- Progress bars: Visual progress on each backup card
-- Card-scoped logs: Each backup has its own activity log
-
 FEATURES:
+- Real-time folder progress: See which folder is being backed up
+- ETA countdown (appdata/plugins/flash) or elapsed time (VM)
+- Progress bars on each backup card
+- Card-scoped logs: Each backup has its own activity log
+- Incremental appdata: rsync + hardlinks (storage efficient, easy restore)
 - Scheduled automated backups (daily/weekly/monthly)
-- Week/day/month naming schemes
 - Automatic rotation and cleanup
 - Smart exclusions (cache, logs, temp files)
 - Backup verification
-- Clean modern dark web interface
 
 Access the web UI at http://[IP]:[PORT:5050]/
     </Overview>
@@ -43,7 +40,7 @@ Access the web UI at http://[IP]:[PORT:5050]/
     <DonateText>Support Development</DonateText>
     <DonateLink></DonateLink>
     <Requires></Requires>
-    <Description>Backup Unraid State v2.0 - Modern web interface for VM, appdata, plugin, and flash drive backups. Features real-time progress tracking, ETA countdown, and scheduled automation.</Description>
+    <Description>Backup Unraid State v2.1 - Modern web interface for VM, appdata, plugin, and flash drive backups. Features real-time progress, ETA countdown, incremental rsync+hardlinks, and scheduled automation.</Description>
     
     <!-- Web UI Port -->
     <Config 

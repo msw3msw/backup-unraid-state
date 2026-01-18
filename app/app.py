@@ -236,7 +236,7 @@ def load_schedule():
     default_schedule = {
         "enabled": False,
         "time": "03:00",
-        "days": ["sunday"],
+        "days": ["sun"],
         "vm_enabled": True,
         "vm_list": [],
         "vm_handling": "stop",
@@ -488,9 +488,9 @@ def run_backup_with_progress(backup_type, **kwargs):
             if not line:
                 continue
             
-            # Parse PROGRESS markers: PROGRESS:percent:phase:eta
-            if line.startswith("PROGRESS:"):
-                parts = line.split(":", 3)
+            # Parse PROGRESS markers: PROGRESS|percent|phase|eta
+            if line.startswith("PROGRESS|"):
+                parts = line.split("|", 3)
                 if len(parts) >= 3:
                     try:
                         percent = int(parts[1])

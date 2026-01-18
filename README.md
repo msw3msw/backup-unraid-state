@@ -28,6 +28,33 @@ A modern, clean web interface for backing up your Unraid server's critical data 
 - Automatic backup rotation (configurable retention)
 - Cron-based reliability
 
+### Smart Features
+
+- Week/day/month-based naming schemes (week01, day3_week15, January_2025)
+- Automatic old backup cleanup
+- Intelligent exclusions for cache, logs, and temp files
+- Backup verification after creation
+- VM path translation for Docker container compatibility
+
+### Incremental Backups (Appdata)
+
+When enabled in Settings, appdata backups use **rsync with hardlinks**:
+
+- Each backup is a **complete, standalone folder**
+- Unchanged files are hardlinked to previous backup (share disk space)
+- **Easy restore** - just copy any snapshot folder, no chain to reconstruct
+- **Storage efficient** - only changed files use additional space
+- **Safe** - deleting old backups doesn't affect newer ones
+
+```
+/backup/appdata/snapshots/
+├── 2025-01-15_0300/   ← Complete (50GB apparent, 50GB actual)
+├── 2025-01-16_0300/   ← Complete (50GB apparent, 2GB actual - hardlinks!)
+└── 2025-01-17_0300/   ← Complete (50GB apparent, 1GB actual)
+
+Total: 53GB actual disk usage for 3 complete backups
+```
+
 ### Web Interface
 
 - Clean, modern dark theme matching Unraid's style
@@ -168,9 +195,18 @@ Log:
 3. Import the VM XML from the metadata file
 
 ### Appdata Restore
+
+**Full backup (tar):**
 1. Stop the Docker container
 2. Extract the backup to `/mnt/user/appdata/`
 3. Start the container
+
+**Incremental backup (rsync snapshots):**
+1. Stop the Docker container
+2. Copy the snapshot folder: `cp -a /backup/appdata/snapshots/2025-01-17_0300/* /mnt/user/appdata/`
+3. Start the container
+
+(Each snapshot is complete - no need to restore a chain!)
 
 ### Flash Drive Restore (Disaster Recovery)
 1. Create a new Unraid USB using the USB Creator tool
@@ -182,6 +218,11 @@ Log:
 ---
 
 ## Changelog
+
+### v2.1
+- **Incremental backups redesigned** - Now uses rsync + hardlinks (each backup is complete, standalone)
+- **VM elapsed time** - VMs show elapsed time instead of unreliable ETA
+- **Tooltip on incremental** - Hover info explaining how incremental works
 
 ### v2.0
 - **Real-time folder progress** - See which folder is being backed up

@@ -5,7 +5,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="Michael"
 LABEL description="Backup Unraid State - VM, appdata, and plugin backups"
-LABEL version="1.0.0"
+LABEL version="2.1.0"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     tar \
     gzip \
+    rsync \
+    curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

@@ -21,12 +21,12 @@ EXCLUDE_PATTERNS=(
     "*/temp/*" "*/tmp/*" "*.log" "*.tmp" "*Transcode*" "*transcodes*"
 )
 
-# Progress with ETA: PROGRESS:percent:phase:eta
+# Progress with ETA: PROGRESS|percent|phase|eta
 progress() {
     local percent="$1"
     local phase="$2"
     local eta="${3:-}"
-    [ "$PROGRESS_ENABLED" == "1" ] && echo "PROGRESS:${percent}:${phase}:${eta}"
+    [ "$PROGRESS_ENABLED" == "1" ] && echo "PROGRESS|${percent}|${phase}|${eta}"
 }
 
 # Format seconds to Xm Ys
@@ -119,10 +119,9 @@ backup_vm() {
     
     BACKUP_TAG=$(get_backup_tag "$NAMING_SCHEME")
     START_TIME=$(date +%s)
-    TOTAL_PHASES=6
-    CURRENT_PHASE=0
     
-    progress 0 "Initializing VM backup" ""
+    # VM backup uses elapsed time (not ETA) because it's one big file
+    progress 0 "Initializing VM backup" "elapsed:0s"
     
     log "=========================================="
     log "Starting VM backup: $VM_NAME"
@@ -132,11 +131,9 @@ backup_vm() {
     
     [ "$COMPRESS" == "1" ] && BACKUP_FILE="$BACKUP_BASE/vms/${VM_NAME}_${BACKUP_TAG}.tar.gz" || BACKUP_FILE="$BACKUP_BASE/vms/${VM_NAME}_${BACKUP_TAG}.tar"
     
-    # Phase 1: Check VM
-    CURRENT_PHASE=1
-    PHASE_PERCENT=$((CURRENT_PHASE * 100 / TOTAL_PHASES))
-    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
-    progress $PHASE_PERCENT "Checking VM status" "$ETA"
+    # Check VM
+    ELAPSED=$(($(date +%s) - START_TIME))
+    progress 5 "Checking VM status" "elapsed:$(format_time $ELAPSED)"
     
     if ! virsh dominfo "$VM_NAME" &>/dev/null; then
         log "ERROR: VM '$VM_NAME' not found"
@@ -147,10 +144,9 @@ backup_vm() {
     VM_STATE=$(virsh domstate "$VM_NAME" 2>/dev/null)
     log "VM state: $VM_STATE"
     
-    # Phase 2: Get disk info
-    CURRENT_PHASE=2
-    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
-    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Getting VM disk info" "$ETA"
+    # Get disk info
+    ELAPSED=$(($(date +%s) - START_TIME))
+    progress 10 "Getting VM disk info" "elapsed:$(format_time $ELAPSED)"
     
     VM_DISK_HOST=$(virsh domblklist "$VM_NAME" | grep -E 'vd|hd|sd' | awk '{print $2}' | head -1)
     VM_DISK=$(echo "$VM_DISK_HOST" | sed 's|/mnt/user/domains|/domains|')
@@ -161,6 +157,10 @@ backup_vm() {
         return 1
     fi
     
+    # Get disk size for logging
+    VM_SIZE=$(du -h "$VM_DISK" 2>/dev/null | cut -f1)
+    log "VM disk: $VM_DISK ($VM_SIZE)"
+    
     VM_XML=$(virsh dumpxml "$VM_NAME" 2>/dev/null)
     
     # Save metadata
@@ -170,12 +170,11 @@ backup_vm() {
 {"backup_type":"vm","vm_name":"$VM_NAME","vm_disk_path":"$VM_DISK_HOST","backup_date":"$(date -Iseconds)","backup_tag":"$BACKUP_TAG","compressed":$COMPRESS,"original_state":"$VM_STATE"}
 EOF
     
-    # Phase 3: Stop VM if needed
-    CURRENT_PHASE=3
+    # Stop VM if needed
     NEED_RESTART=false
     if [ "$VM_HANDLING" == "stop" ] && [ "$VM_STATE" == "running" ]; then
-        ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
-        progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Shutting down VM" "$ETA"
+        ELAPSED=$(($(date +%s) - START_TIME))
+        progress 15 "Shutting down VM" "elapsed:$(format_time $ELAPSED)"
         log "Shutting down VM..."
         virsh shutdown "$VM_NAME"
         NEED_RESTART=true
@@ -184,42 +183,55 @@ EOF
             sleep 1
             VM_STATE=$(virsh domstate "$VM_NAME" 2>/dev/null)
             [ "$VM_STATE" == "shut off" ] && break
+            ELAPSED=$(($(date +%s) - START_TIME))
+            progress 15 "Waiting for shutdown ($i/60)" "elapsed:$(format_time $ELAPSED)"
         done
         
         [ "$VM_STATE" != "shut off" ] && virsh destroy "$VM_NAME" && sleep 2
         log "VM stopped"
     fi
     
-    # Phase 4: Create archive
-    CURRENT_PHASE=4
-    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
-    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Creating backup archive" "$ETA"
+    # Create archive - this is the long part, update elapsed time periodically
+    ELAPSED=$(($(date +%s) - START_TIME))
+    progress 20 "Creating archive ($VM_SIZE)" "elapsed:$(format_time $ELAPSED)"
     log "Creating backup archive..."
     
+    # Run tar in background and update progress with elapsed time
     if [ "$COMPRESS" == "1" ]; then
-        tar -I "gzip -$COMPRESSION_LEVEL" -cf "$BACKUP_FILE" -C "$(dirname "$VM_DISK")" "$(basename "$VM_DISK")" 2>&1
+        tar -I "gzip -$COMPRESSION_LEVEL" -cf "$BACKUP_FILE" -C "$(dirname "$VM_DISK")" "$(basename "$VM_DISK")" 2>&1 &
     else
-        tar -cf "$BACKUP_FILE" -C "$(dirname "$VM_DISK")" "$(basename "$VM_DISK")" 2>&1
+        tar -cf "$BACKUP_FILE" -C "$(dirname "$VM_DISK")" "$(basename "$VM_DISK")" 2>&1 &
     fi
+    TAR_PID=$!
+    
+    # Update elapsed time while tar runs
+    while kill -0 $TAR_PID 2>/dev/null; do
+        sleep 3
+        ELAPSED=$(($(date +%s) - START_TIME))
+        CURRENT_SIZE=$(du -h "$BACKUP_FILE" 2>/dev/null | cut -f1 || echo "0")
+        progress 25 "Archiving: $CURRENT_SIZE" "elapsed:$(format_time $ELAPSED)"
+    done
+    wait $TAR_PID
     
     BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
     log "Archive created: $BACKUP_SIZE"
     
-    # Phase 5: Verify
-    CURRENT_PHASE=5
-    ETA=$(calc_eta $(($(date +%s) - START_TIME)) $CURRENT_PHASE $TOTAL_PHASES)
-    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Verifying backup ($BACKUP_SIZE)" "$ETA"
+    # Verify
+    ELAPSED=$(($(date +%s) - START_TIME))
+    progress 85 "Verifying ($BACKUP_SIZE)" "elapsed:$(format_time $ELAPSED)"
     verify_backup "$BACKUP_FILE"
     
     # Restart VM if needed
     if [ "$NEED_RESTART" == "true" ]; then
+        ELAPSED=$(($(date +%s) - START_TIME))
+        progress 92 "Restarting VM" "elapsed:$(format_time $ELAPSED)"
         log "Restarting VM..."
         virsh start "$VM_NAME"
     fi
     
-    # Phase 6: Cleanup
-    CURRENT_PHASE=6
-    progress $((CURRENT_PHASE * 100 / TOTAL_PHASES)) "Cleaning up" ""
+    # Cleanup
+    ELAPSED=$(($(date +%s) - START_TIME))
+    progress 96 "Cleaning up" "elapsed:$(format_time $ELAPSED)"
     cleanup_old_backups "${VM_NAME}_*.tar*" "$BACKUP_BASE/vms"
     
     DURATION=$(($(date +%s) - START_TIME))
@@ -251,6 +263,7 @@ backup_appdata() {
     
     log "=========================================="
     log "Starting appdata backup"
+    log "Mode: $([ "$INCREMENTAL" == "1" ] && echo "Incremental (rsync+hardlinks)" || echo "Full (tar archive)")"
     log "=========================================="
     
     mkdir -p "$BACKUP_BASE/appdata"
@@ -260,61 +273,116 @@ backup_appdata() {
         mapfile -t ALL_FOLDERS < <(find "$APPDATA_PATH" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort)
         TOTAL_FOLDERS=${#ALL_FOLDERS[@]}
         
-        [ "$INCREMENTAL" == "1" ] && BACKUP_FILE="$BACKUP_BASE/appdata/appdata_INCREMENTAL_${BACKUP_TAG}.tar.gz" || BACKUP_FILE="$BACKUP_BASE/appdata/appdata_FULL_${BACKUP_TAG}.tar.gz"
-        
         progress 2 "Found $TOTAL_FOLDERS folders" ""
         log "Found $TOTAL_FOLDERS folders to backup"
         
-        # Save metadata
-        METADATA_FILE="${BACKUP_FILE%.tar.gz}.metadata.json"
-        echo "{\"backup_type\":\"appdata_full\",\"folders\":$TOTAL_FOLDERS,\"backup_date\":\"$(date -Iseconds)\",\"backup_tag\":\"$BACKUP_TAG\"}" > "$METADATA_FILE"
-        
-        # Remove old file
-        rm -f "$BACKUP_FILE"
-        
-        # Backup each folder and append to archive
-        CURRENT=0
-        for FOLDER in "${ALL_FOLDERS[@]}"; do
-            CURRENT=$((CURRENT + 1))
+        if [ "$INCREMENTAL" == "1" ]; then
+            # ============== RSYNC + HARDLINKS MODE ==============
+            # Each backup is a complete folder, unchanged files hardlinked to previous
             
-            # Calculate progress (5-90%)
-            PERCENT=$((5 + (CURRENT * 85 / TOTAL_FOLDERS)))
+            BACKUP_DIR="$BACKUP_BASE/appdata/snapshots"
+            mkdir -p "$BACKUP_DIR"
             
-            # Calculate ETA
-            ELAPSED=$(($(date +%s) - START_TIME))
-            ETA=$(calc_eta $ELAPSED $CURRENT $TOTAL_FOLDERS)
+            # Current backup folder with timestamp
+            CURRENT_BACKUP="$BACKUP_DIR/$(date +%Y-%m-%d_%H%M)"
             
-            progress $PERCENT "Backing up: $FOLDER ($CURRENT/$TOTAL_FOLDERS)" "$ETA"
-            log "[$CURRENT/$TOTAL_FOLDERS] Backing up: $FOLDER"
+            # Find most recent previous backup for hardlinking
+            PREVIOUS_BACKUP=$(ls -1d "$BACKUP_DIR"/20* 2>/dev/null | sort -r | head -1)
             
-            # Append to tar (create on first, append on rest)
-            if [ $CURRENT -eq 1 ]; then
-                eval tar -cf "$BACKUP_FILE.tmp" $EXCLUDE_ARGS -C "$APPDATA_PATH" "$FOLDER" 2>/dev/null
+            if [ -n "$PREVIOUS_BACKUP" ] && [ -d "$PREVIOUS_BACKUP" ]; then
+                log "Linking unchanged files to: $(basename "$PREVIOUS_BACKUP")"
+                LINK_DEST="--link-dest=$PREVIOUS_BACKUP"
             else
-                eval tar -rf "$BACKUP_FILE.tmp" $EXCLUDE_ARGS -C "$APPDATA_PATH" "$FOLDER" 2>/dev/null
+                log "No previous backup found - creating full backup"
+                LINK_DEST=""
             fi
-        done
-        
-        # Compress the final tar
-        progress 92 "Compressing archive" ""
-        log "Compressing archive..."
-        gzip -$COMPRESSION_LEVEL "$BACKUP_FILE.tmp"
-        mv "$BACKUP_FILE.tmp.gz" "$BACKUP_FILE"
-        
-        BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-        log "Archive created: $BACKUP_SIZE"
-        
-        # Verify
-        progress 95 "Verifying ($BACKUP_SIZE)" ""
-        verify_backup "$BACKUP_FILE"
-        
-        # Cleanup
-        progress 98 "Cleaning up" ""
-        cleanup_old_backups "appdata_FULL_*.tar.gz" "$BACKUP_BASE/appdata"
-        cleanup_old_backups "appdata_INCREMENTAL_*.tar.gz" "$BACKUP_BASE/appdata"
+            
+            # Build rsync exclude args
+            RSYNC_EXCLUDES=""
+            for pattern in "${EXCLUDE_PATTERNS[@]}"; do
+                RSYNC_EXCLUDES="$RSYNC_EXCLUDES --exclude=$pattern"
+            done
+            if [ -n "$EXCLUDE_FOLDERS" ]; then
+                IFS=',' read -ra FOLDERS <<< "$EXCLUDE_FOLDERS"
+                for folder in "${FOLDERS[@]}"; do
+                    [ -n "$folder" ] && RSYNC_EXCLUDES="$RSYNC_EXCLUDES --exclude=$folder"
+                done
+            fi
+            
+            # Rsync each folder with progress
+            CURRENT=0
+            mkdir -p "$CURRENT_BACKUP"
+            
+            for FOLDER in "${ALL_FOLDERS[@]}"; do
+                CURRENT=$((CURRENT + 1))
+                PERCENT=$((5 + (CURRENT * 90 / TOTAL_FOLDERS)))
+                ELAPSED=$(($(date +%s) - START_TIME))
+                
+                progress $PERCENT "$FOLDER ($CURRENT/$TOTAL_FOLDERS)" "elapsed:$(format_time $ELAPSED)"
+                log "[$CURRENT/$TOTAL_FOLDERS] Syncing: $FOLDER"
+                
+                eval rsync -a $LINK_DEST $RSYNC_EXCLUDES "$APPDATA_PATH/$FOLDER" "$CURRENT_BACKUP/" 2>/dev/null
+            done
+            
+            # Save metadata
+            cat > "$CURRENT_BACKUP/.metadata.json" << EOF
+{"backup_type":"appdata_incremental","mode":"rsync_hardlinks","folders":$TOTAL_FOLDERS,"backup_date":"$(date -Iseconds)","previous":"$(basename "$PREVIOUS_BACKUP" 2>/dev/null)"}
+EOF
+            
+            # Calculate actual disk usage (shows hardlink savings)
+            BACKUP_SIZE=$(du -sh "$CURRENT_BACKUP" | cut -f1)
+            ACTUAL_SIZE=$(du -sh --apparent-size "$CURRENT_BACKUP" | cut -f1)
+            log "Backup size: $BACKUP_SIZE (apparent: $ACTUAL_SIZE)"
+            
+            # Cleanup old snapshots
+            progress 98 "Cleaning up old snapshots" ""
+            ls -1d "$BACKUP_DIR"/20* 2>/dev/null | sort -r | tail -n +$((MAX_BACKUPS + 1)) | while read old; do
+                log "Removing old snapshot: $(basename "$old")"
+                rm -rf "$old"
+            done
+            
+        else
+            # ============== FULL TAR ARCHIVE MODE ==============
+            BACKUP_FILE="$BACKUP_BASE/appdata/appdata_FULL_${BACKUP_TAG}.tar.gz"
+            METADATA_FILE="${BACKUP_FILE%.tar.gz}.metadata.json"
+            
+            echo "{\"backup_type\":\"appdata_full\",\"folders\":$TOTAL_FOLDERS,\"backup_date\":\"$(date -Iseconds)\",\"backup_tag\":\"$BACKUP_TAG\"}" > "$METADATA_FILE"
+            
+            rm -f "$BACKUP_FILE" "$BACKUP_FILE.tmp"
+            
+            CURRENT=0
+            for FOLDER in "${ALL_FOLDERS[@]}"; do
+                CURRENT=$((CURRENT + 1))
+                PERCENT=$((5 + (CURRENT * 85 / TOTAL_FOLDERS)))
+                ELAPSED=$(($(date +%s) - START_TIME))
+                
+                progress $PERCENT "$FOLDER ($CURRENT/$TOTAL_FOLDERS)" "elapsed:$(format_time $ELAPSED)"
+                log "[$CURRENT/$TOTAL_FOLDERS] Backing up: $FOLDER"
+                
+                if [ $CURRENT -eq 1 ]; then
+                    eval tar -cf "$BACKUP_FILE.tmp" $EXCLUDE_ARGS -C "$APPDATA_PATH" "$FOLDER" 2>/dev/null
+                else
+                    eval tar -rf "$BACKUP_FILE.tmp" $EXCLUDE_ARGS -C "$APPDATA_PATH" "$FOLDER" 2>/dev/null
+                fi
+            done
+            
+            progress 92 "Compressing archive" ""
+            log "Compressing archive..."
+            gzip -$COMPRESSION_LEVEL "$BACKUP_FILE.tmp"
+            mv "$BACKUP_FILE.tmp.gz" "$BACKUP_FILE"
+            
+            BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+            log "Archive created: $BACKUP_SIZE"
+            
+            progress 95 "Verifying ($BACKUP_SIZE)" ""
+            verify_backup "$BACKUP_FILE"
+            
+            progress 98 "Cleaning up" ""
+            cleanup_old_backups "appdata_FULL_*.tar.gz" "$BACKUP_BASE/appdata"
+        fi
         
     else
-        # Custom folder backup
+        # Custom folder backup (always tar)
         TOTAL_FOLDERS=${#CUSTOM_FOLDERS[@]}
         CURRENT=0
         
@@ -322,9 +390,8 @@ backup_appdata() {
             CURRENT=$((CURRENT + 1))
             PERCENT=$((CURRENT * 95 / TOTAL_FOLDERS))
             ELAPSED=$(($(date +%s) - START_TIME))
-            ETA=$(calc_eta $ELAPSED $CURRENT $TOTAL_FOLDERS)
             
-            progress $PERCENT "Backing up: $FOLDER ($CURRENT/$TOTAL_FOLDERS)" "$ETA"
+            progress $PERCENT "$FOLDER ($CURRENT/$TOTAL_FOLDERS)" "elapsed:$(format_time $ELAPSED)"
             log "[$CURRENT/$TOTAL_FOLDERS] Backing up: $FOLDER"
             
             BACKUP_FILE="$BACKUP_BASE/appdata/containers/${FOLDER}/${FOLDER}_${BACKUP_TAG}.tar.gz"
@@ -373,9 +440,8 @@ backup_plugins() {
         CURRENT=$((CURRENT + 1))
         PERCENT=$((5 + (CURRENT * 80 / TOTAL)))
         ELAPSED=$(($(date +%s) - START_TIME))
-        ETA=$(calc_eta $ELAPSED $CURRENT $TOTAL)
         
-        progress $PERCENT "Backing up: $PLUGIN ($CURRENT/$TOTAL)" "$ETA"
+        progress $PERCENT "$PLUGIN ($CURRENT/$TOTAL)" "elapsed:$(format_time $ELAPSED)"
         log "[$CURRENT/$TOTAL] Backing up: $PLUGIN"
         
         if [ $CURRENT -eq 1 ]; then
@@ -452,9 +518,8 @@ backup_flash() {
         ITEM_NUM=$((ITEM_NUM + 1))
         SUB_PERCENT=$((20 + (ITEM_NUM * 50 / TOTAL_ITEMS)))
         ELAPSED=$(($(date +%s) - START_TIME))
-        ETA=$(calc_eta $ELAPSED $((CURRENT_PHASE * 10 + ITEM_NUM)) $((TOTAL_PHASES * 10 + TOTAL_ITEMS)))
         
-        progress $SUB_PERCENT "Archiving: $DIR" "$ETA"
+        progress $SUB_PERCENT "$DIR ($ITEM_NUM/$TOTAL_ITEMS)" "elapsed:$(format_time $ELAPSED)"
         log "Archiving: $DIR"
         
         if [ $ITEM_NUM -eq 1 ]; then

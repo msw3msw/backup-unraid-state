@@ -331,7 +331,10 @@
                     <div class="col-md-6"><div class="settings-section h-100"><h6><i class="bi bi-gear me-2"></i>Backup Behaviour</h6>
                         <div class="mb-3"><label class="form-label">Compression</label><select class="form-select" id="compressionLevel" style="width:180px;"><option value="1" {% if config.compression_level == 1 %}selected{% endif %}>1 - Fastest</option><option value="3" {% if config.compression_level == 3 %}selected{% endif %}>3 - Fast</option><option value="6" {% if config.compression_level == 6 or not config.compression_level %}selected{% endif %}>6 - Balanced</option><option value="9" {% if config.compression_level == 9 %}selected{% endif %}>9 - Maximum</option></select></div>
                         <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="verifyBackups" {% if config.verify_backups != false %}checked{% endif %}><label class="form-check-label" for="verifyBackups">Verify backups</label></div>
-                        <div class="form-check"><input class="form-check-input" type="checkbox" id="incrementalEnabled" {% if config.incremental_enabled %}checked{% endif %}><label class="form-check-label" for="incrementalEnabled">Incremental (Appdata)</label></div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="incrementalEnabled" {% if config.incremental_enabled %}checked{% endif %}>
+                            <label class="form-check-label" for="incrementalEnabled" style="cursor: help;" data-bs-toggle="tooltip" data-bs-placement="top" title="Uses rsync with hardlinks. Each backup is a complete folder, but unchanged files share disk space with previous backups. Easy restore - just copy any snapshot folder.">Incremental (Appdata) <i class="bi bi-info-circle" style="color: var(--text-muted);"></i></label>
+                        </div>
                     </div></div>
                     <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-folder-x me-2"></i>Exclude Folders</h6><p class="text-muted small mb-2">Skip during backup:</p><div class="exclude-grid" id="excludeFoldersList"><p class="text-muted small">Loading...</p></div></div></div>
                     <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-signpost-2 me-2"></i>Paths</h6><p class="text-muted small mb-2">Docker volumes:</p>
@@ -433,10 +436,11 @@
             }
         }
         
-        // Track current ETA for each backup
+        // Track current ETA and phase for each backup
         const backupETA = { vm: '', appdata: '', plugins: '', flash: '' };
+        const backupPhase = { vm: '', appdata: '', plugins: '', flash: '' };
         
-        function setButtonState(type, running, eta = null) {
+        function setButtonState(type, running, eta = null, phase = null) {
             const btn = document.getElementById(type + 'BackupBtn');
             const labels = {
                 'vm': '<i class="bi bi-play-fill me-1"></i>Start VM Backup',
@@ -447,18 +451,35 @@
             
             if (running) {
                 btn.disabled = true;
-                if (eta) {
-                    backupETA[type] = eta;
-                    btn.innerHTML = `<i class="bi bi-hourglass-split me-1"></i>~${eta} remaining`;
-                } else if (backupETA[type]) {
-                    btn.innerHTML = `<i class="bi bi-hourglass-split me-1"></i>~${backupETA[type]} remaining`;
+                if (phase) backupPhase[type] = phase;
+                if (eta) backupETA[type] = eta;
+                
+                let displayText = '';
+                const currentPhase = backupPhase[type];
+                const currentEta = backupETA[type];
+                
+                if (currentEta && currentEta.startsWith('elapsed:')) {
+                    const elapsed = currentEta.replace('elapsed:', '');
+                    if (currentPhase) {
+                        // Show: "plex (5/27) • 2m 30s"
+                        displayText = `${currentPhase} • ${elapsed}`;
+                    } else {
+                        displayText = `${elapsed} elapsed`;
+                    }
+                } else if (currentEta) {
+                    displayText = `~${currentEta} remaining`;
+                } else if (currentPhase) {
+                    displayText = currentPhase;
                 } else {
-                    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Starting...';
+                    displayText = 'Starting...';
                 }
+                
+                btn.innerHTML = `<i class="bi bi-hourglass-split me-1"></i>${displayText}`;
             } else {
                 btn.disabled = false;
                 btn.innerHTML = labels[type];
                 backupETA[type] = '';
+                backupPhase[type] = '';
             }
         }
         
@@ -496,9 +517,9 @@
                         setProgress(type, data.percent, status);
                     }
                     
-                    // Update button state with ETA
+                    // Update button state with ETA and phase
                     if (!data.complete && !data.error) {
-                        setButtonState(type, true, data.eta || null);
+                        setButtonState(type, true, data.eta || null, data.phase || null);
                     }
                     
                     // Add log line
@@ -596,7 +617,10 @@
             };
             
             const result = await apiCall('/api/schedule', 'POST', schedule);
-            if (result?.success) alert('Schedule saved!');
+            if (result?.success) {
+                alert('Schedule saved!');
+                loadStats();  // Refresh stats to show next scheduled
+            }
         }
         
         async function saveSettings() {
@@ -683,6 +707,10 @@
         
         // Init
         document.addEventListener('DOMContentLoaded', function() {
+            // Initialize Bootstrap tooltips
+            const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+            tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el));
+            
             loadVMs();
             loadFolders();
             loadStats();
