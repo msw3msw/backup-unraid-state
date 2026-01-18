@@ -15,8 +15,8 @@ A modern, clean web interface for backing up your Unraid server's critical data 
 
 ### Real-Time Progress Tracking
 
-- **Folder-by-folder progress** - See exactly which folder is being backed up: `[5/27] Backing up: plex`
-- **ETA countdown** - Button shows estimated time remaining: `~3m 20s remaining`
+- **Folder-by-folder progress** - See exactly which folder is being backed up: `plex (5/27)`
+- **Elapsed time** - VM and Appdata show running time: `plex (5/27) • 2m 30s`
 - **Progress bars** - Visual progress indicator on each backup card
 - **Card-scoped logs** - Each backup card has its own activity log (no context switching)
 - **Server-Sent Events (SSE)** - Live updates without polling
@@ -173,11 +173,11 @@ services:
 ### Backup Now Tab
 - 2x2 grid of backup cards (VM, Appdata, Plugins, Flash)
 - Each card shows: controls, progress bar, activity log
-- Real-time ETA countdown on buttons during backup
+- Real-time progress on buttons during backup
 
 ### Progress Example
 ```
-Button: [⏳ ~2m 15s remaining]
+Button: [⏳ plex (5/27) • 2m 30s]
 Progress: ████████████░░░░░░░░ 58%
 Log:
   [14/27] Backing up: radarr
@@ -221,8 +221,9 @@ Log:
 
 ### v2.1
 - **Incremental backups redesigned** - Now uses rsync + hardlinks (each backup is complete, standalone)
-- **VM elapsed time** - VMs show elapsed time instead of unreliable ETA
+- **Elapsed time display** - All backups show elapsed time with current folder: `plex (5/27) • 2m 30s`
 - **Tooltip on incremental** - Hover info explaining how incremental works
+- **Fixed schedule display** - "Next Scheduled" now updates after saving
 
 ### v2.0
 - **Real-time folder progress** - See which folder is being backed up
