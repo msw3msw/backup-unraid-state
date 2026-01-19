@@ -4,10 +4,10 @@
 FROM python:3.11-slim
 
 LABEL maintainer="Michael"
-LABEL description="Backup Unraid State - VM, appdata, and plugin backups"
-LABEL version="2.1.0"
+LABEL description="Backup Unraid State - VM, appdata, and plugin backups with container restore"
+LABEL version="2.2.0"
 
-# Install system dependencies
+# Install system dependencies including Docker CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
     libvirt-clients \
@@ -16,6 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gzip \
     rsync \
     curl \
+    gnupg \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

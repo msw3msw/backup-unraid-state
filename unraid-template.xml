@@ -8,7 +8,7 @@
     <Support>https://github.com/msw3msw/backup-unraid-state/issues</Support>
     <Project>https://github.com/msw3msw/backup-unraid-state</Project>
     <Overview>
-Backup Unraid State v2.1 - A modern web interface for backing up your Unraid server.
+Backup Unraid State v2.2 - A modern web interface for backing up your Unraid server.
 
 BACKUP TYPES:
 - VM backups (stop or live mode)
@@ -16,9 +16,14 @@ BACKUP TYPES:
 - Plugin configuration backups
 - Flash drive backup (disaster recovery)
 
+NEW IN v2.2 - CONTAINER RESTORE:
+- Saves container metadata during backup (image, ports, volumes)
+- Restore appdata only, or pull image + restore
+- One-click image pulling from Restore tab
+- Saves Unraid templates for full container recreation
+
 FEATURES:
-- Real-time folder progress: See which folder is being backed up
-- ETA countdown (appdata/plugins/flash) or elapsed time (VM)
+- Real-time folder progress with elapsed time
 - Progress bars on each backup card
 - Card-scoped logs: Each backup has its own activity log
 - Incremental appdata: rsync + hardlinks (storage efficient, easy restore)
@@ -40,7 +45,7 @@ Access the web UI at http://[IP]:[PORT:5050]/
     <DonateText>Support Development</DonateText>
     <DonateLink></DonateLink>
     <Requires></Requires>
-    <Description>Backup Unraid State v2.1 - Modern web interface for VM, appdata, plugin, and flash drive backups. Features real-time progress, ETA countdown, incremental rsync+hardlinks, and scheduled automation.</Description>
+    <Description>Backup Unraid State v2.2 - Modern web interface for VM, appdata, plugin, and flash drive backups. NEW: Container restore with image pulling, metadata saving, and one-click recovery.</Description>
     
     <!-- Web UI Port -->
     <Config 
@@ -134,6 +139,18 @@ Access the web UI at http://[IP]:[PORT:5050]/
         Display="advanced" 
         Required="true" 
         Mask="false">/var/run/libvirt/libvirt-sock</Config>
+    
+    <!-- Docker Socket for container management -->
+    <Config 
+        Name="Docker Socket" 
+        Target="/var/run/docker.sock" 
+        Default="/var/run/docker.sock" 
+        Mode="rw" 
+        Description="Docker socket for container metadata and image pulling" 
+        Type="Path" 
+        Display="advanced" 
+        Required="true" 
+        Mask="false">/var/run/docker.sock</Config>
     
     <!-- Environment Variables -->
     <Config 

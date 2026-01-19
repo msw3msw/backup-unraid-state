@@ -25,6 +25,9 @@ services:
       
       # Libvirt socket for VM control
       - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
+      
+      # Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
     
     environment:
       - MAX_BACKUPS=2

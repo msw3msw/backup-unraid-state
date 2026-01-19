@@ -17,10 +17,14 @@
             --border: #2a2a2a;
             --border-highlight: #3a3a3a;
             --text: #e5e5e5;
-            --text-muted: #737373;
+            --text-muted: #b8b8b8;
             --success: #22c55e;
+            --warning: #f59e0b;
             --error: #ef4444;
         }
+        
+        /* Override Bootstrap text-muted */
+        .text-muted { color: #b8b8b8 !important; }
         
         * { box-sizing: border-box; }
         
@@ -170,6 +174,29 @@
             border-radius: 8px; padding: 1rem; height: 500px; overflow-y: auto;
             font-family: 'SF Mono', Monaco, 'Courier New', monospace; font-size: 12px;
         }
+        
+        /* Container metadata table */
+        .table-dark { --bs-table-bg: var(--bg-input); --bs-table-border-color: var(--border); }
+        .table-dark thead { background: var(--bg-card); }
+        .table-dark code { background: var(--bg-log); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); }
+        .table-dark .btn-group .btn { padding: 0.2rem 0.5rem; }
+        
+        /* Modal styling */
+        .modal-content.bg-dark { background: var(--bg-card) !important; border: 1px solid var(--border); }
+        .modal-content.bg-dark .form-check-label { color: var(--text); }
+        .modal-content.bg-dark .form-check-input:checked { background-color: var(--primary); border-color: var(--primary); }
+        
+        /* XML list styling */
+        .xml-list { background: var(--bg-input); border-radius: 8px; max-height: 300px; overflow-y: auto; }
+        .xml-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.85rem;
+        }
+        .xml-item:last-child { border-bottom: none; }
+        .xml-item .xml-name { color: var(--text); }
+        .xml-item .xml-status { font-size: 0.75rem; }
+        .xml-item .xml-status.active { color: var(--success); }
+        .xml-item .xml-status.orphan { color: var(--warning); }
     </style>
 </head>
 <body>
@@ -314,10 +341,73 @@
             <!-- RESTORE TAB -->
             <div class="tab-pane fade" id="restore">
                 <div class="row g-4">
+                    <!-- Container Restore Section (hidden until metadata exists) -->
+                    <div class="col-12" id="containerRestoreSection" style="display: none;">
+                        <div class="settings-section">
+                            <h6><i class="bi bi-box-seam me-2"></i>Container Restore</h6>
+                            <p class="text-muted small mb-3">Restore individual containers with option to pull images. Metadata saved during appdata backup.</p>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-dark" style="font-size: 0.85rem;">
+                                    <thead>
+                                        <tr>
+                                            <th>Container</th>
+                                            <th>Image</th>
+                                            <th>Appdata Folder</th>
+                                            <th>Template</th>
+                                            <th style="width: 200px;">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="containerMetadataTable">
+                                        <tr><td colspan="5" class="text-muted text-center">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Existing Backups -->
                     <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-pc-display me-2"></i>VM Backups</h6><div class="backup-list" id="vmBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div></div></div>
-                    <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-folder me-2"></i>Appdata Backups</h6><div class="backup-list" id="appdataBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div></div></div>
+                    <div class="col-md-6">
+                        <div class="settings-section">
+                            <h6><i class="bi bi-folder me-2"></i>Appdata Backups <i class="bi bi-info-circle text-muted" style="font-size: 0.8rem; cursor: help;" data-bs-toggle="tooltip" data-bs-placement="top" title="Restore options: Extract appdata only, or also pull all container images for disaster recovery."></i></h6>
+                            <div class="backup-list" id="appdataBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div>
+                        </div>
+                    </div>
                     <div class="col-md-6"><div class="settings-section"><h6><i class="bi bi-puzzle me-2"></i>Plugin Backups</h6><div class="backup-list" id="pluginsBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div></div></div>
                     <div class="col-md-6"><div class="settings-section" style="border-color:var(--primary);"><h6 style="color:var(--primary);"><i class="bi bi-usb-drive me-2"></i>Flash Backups</h6><div class="backup-list" id="flashBackupsList"><p class="text-muted small p-3 m-0">Loading...</p></div></div></div>
+                </div>
+            </div>
+            
+            <!-- Appdata Restore Modal -->
+            <div class="modal fade" id="appdataRestoreModal" tabindex="-1">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content bg-dark">
+                        <div class="modal-header border-secondary">
+                            <h6 class="modal-title"><i class="bi bi-folder me-2"></i>Restore Appdata</h6>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="small text-muted mb-3">Backup: <code id="restoreModalFilename"></code></p>
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="radio" name="restoreMode" id="restoreModeAppdata" value="appdata_only" checked>
+                                <label class="form-check-label" for="restoreModeAppdata">
+                                    <i class="bi bi-folder me-1"></i>Restore appdata only
+                                    <div class="text-muted small">Extract backup files to appdata folder</div>
+                                </label>
+                            </div>
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="radio" name="restoreMode" id="restoreModePull" value="pull_all">
+                                <label class="form-check-label" for="restoreModePull">
+                                    <i class="bi bi-cloud-download me-1"></i>Restore appdata + pull all images
+                                    <div class="text-muted small">Extract backup AND pull all container images from saved metadata (for disaster recovery)</div>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="modal-footer border-secondary">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button" class="btn btn-primary" onclick="executeAppdataRestore()"><i class="bi bi-arrow-clockwise me-1"></i>Restore</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -344,6 +434,16 @@
                         <div class="path-item"><code>/plugins</code><span class="text-muted">→</span><span>Plugins</span></div>
                         <div class="path-item"><code>/boot</code><span class="text-muted">→</span><span>Flash drive</span></div>
                     </div></div>
+                    <div class="col-12">
+                        <div class="settings-section">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0"><i class="bi bi-file-earmark-code me-2"></i>Docker Templates (XMLs)</h6>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="loadDockerXmls()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+                            </div>
+                            <p class="text-muted small mb-2">Manage container templates on flash drive. Delete orphaned XMLs from removed containers.</p>
+                            <div class="xml-list" id="dockerXmlList"><p class="text-muted small">Click refresh to load...</p></div>
+                        </div>
+                    </div>
                 </div>
                 <button class="btn btn-primary w-100 mt-3" onclick="saveSettings()"><i class="bi bi-check-lg me-1"></i>Save Settings</button>
             </div>
@@ -640,6 +740,48 @@
             if (result?.success) alert('Settings saved!');
         }
         
+        async function loadDockerXmls() {
+            const listEl = document.getElementById('dockerXmlList');
+            listEl.innerHTML = '<p class="text-muted small p-3 m-0">Loading...</p>';
+            
+            const result = await apiCall('/api/docker-xmls');
+            
+            if (!result?.xmls?.length) {
+                listEl.innerHTML = '<p class="text-muted small p-3 m-0">No Docker templates found</p>';
+                return;
+            }
+            
+            listEl.innerHTML = result.xmls.map(xml => `
+                <div class="xml-item">
+                    <div>
+                        <span class="xml-name"><i class="bi bi-file-earmark-code me-2"></i>${escapeHtml(xml.name)}</span>
+                        <span class="xml-status ${xml.has_container ? 'active' : 'orphan'} ms-2">
+                            ${xml.has_container ? '<i class="bi bi-check-circle"></i> Active' : '<i class="bi bi-exclamation-triangle"></i> No container'}
+                        </span>
+                    </div>
+                    <button class="btn btn-outline-danger btn-sm" onclick="deleteDockerXml('${escapeHtml(xml.filename)}')" ${xml.has_container ? 'disabled data-bs-toggle="tooltip" title="Cannot delete - container exists"' : 'data-bs-toggle="tooltip" title="Delete orphaned template"'}>
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `).join('');
+            
+            // Initialize tooltips
+            document.querySelectorAll('#dockerXmlList [data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+        }
+        
+        async function deleteDockerXml(filename) {
+            if (!confirm(`Delete template: ${filename}?\n\nThis will remove the XML from your flash drive.`)) return;
+            
+            const result = await apiCall('/api/docker-xmls', 'DELETE', { filename: filename });
+            
+            if (result?.success) {
+                alert('Template deleted');
+                loadDockerXmls();
+            } else {
+                alert(`Failed to delete: ${result?.error || 'Unknown error'}`);
+            }
+        }
+        
         async function loadVMs() {
             const select = document.getElementById('vmSelect');
             const vms = await apiCall('/api/vms');
@@ -684,10 +826,175 @@
                 if (!list?.length) {
                     el.innerHTML = '<p class="text-muted small p-3 m-0">No backups found</p>';
                 } else {
-                    el.innerHTML = `<div class="backup-list-header"><span>Name</span><span>Date</span><span>Size</span><span></span></div>` +
-                        list.map(b => `<div class="backup-list-item"><span class="text-truncate">${escapeHtml(b.name)}</span><span class="text-muted">${b.date}</span><span class="text-muted">${b.size}</span><button class="btn btn-outline-secondary btn-sm" onclick="restoreBackup('${type}','${escapeHtml(b.path||b.name)}')">Restore</button></div>`).join('');
+                    if (type === 'appdata') {
+                        // Appdata gets special restore button that opens modal
+                        el.innerHTML = `<div class="backup-list-header"><span>Name</span><span>Date</span><span>Size</span><span></span></div>` +
+                            list.map(b => `<div class="backup-list-item"><span class="text-truncate">${escapeHtml(b.name)}</span><span class="text-muted">${b.date}</span><span class="text-muted">${b.size}</span><button class="btn btn-outline-secondary btn-sm" onclick="showAppdataRestoreModal('${escapeHtml(b.path||b.name)}', '${escapeHtml(b.name)}')" data-bs-toggle="tooltip" title="Choose restore options">Restore</button></div>`).join('');
+                    } else {
+                        el.innerHTML = `<div class="backup-list-header"><span>Name</span><span>Date</span><span>Size</span><span></span></div>` +
+                            list.map(b => `<div class="backup-list-item"><span class="text-truncate">${escapeHtml(b.name)}</span><span class="text-muted">${b.date}</span><span class="text-muted">${b.size}</span><button class="btn btn-outline-secondary btn-sm" onclick="restoreBackup('${type}','${escapeHtml(b.path||b.name)}')">Restore</button></div>`).join('');
+                    }
                 }
             });
+            
+            // Also load container metadata
+            loadContainerMetadata();
+        }
+        
+        // Track current appdata restore selection
+        let currentAppdataRestoreFile = '';
+        
+        function showAppdataRestoreModal(filePath, fileName) {
+            currentAppdataRestoreFile = filePath;
+            document.getElementById('restoreModalFilename').textContent = fileName;
+            document.getElementById('restoreModeAppdata').checked = true;
+            new bootstrap.Modal(document.getElementById('appdataRestoreModal')).show();
+        }
+        
+        async function executeAppdataRestore() {
+            const mode = document.querySelector('input[name="restoreMode"]:checked').value;
+            
+            bootstrap.Modal.getInstance(document.getElementById('appdataRestoreModal')).hide();
+            
+            if (mode === 'pull_all') {
+                // First restore appdata, then pull all images
+                const restoreResult = await apiCall('/api/restore/appdata', 'POST', {
+                    backup_source: currentAppdataRestoreFile,
+                    folder: '',
+                    mode: 'appdata_only'
+                });
+                
+                if (restoreResult?.success) {
+                    // Now pull all images from metadata
+                    const metadata = await apiCall('/api/container-metadata');
+                    if (metadata?.containers?.length) {
+                        alert(`Appdata restored. Now pulling ${metadata.containers.length} container images...`);
+                        let pulled = 0, failed = 0;
+                        for (const c of metadata.containers) {
+                            if (c.image) {
+                                const pullResult = await apiCall('/api/restore/pull-image', 'POST', { image: c.image });
+                                if (pullResult?.success) pulled++; else failed++;
+                            }
+                        }
+                        alert(`Complete! Pulled: ${pulled}, Failed: ${failed}`);
+                    } else {
+                        alert('Appdata restored. No container metadata found for image pulling.');
+                    }
+                } else {
+                    alert(`Restore failed: ${restoreResult?.error || 'Unknown error'}`);
+                }
+            } else {
+                // Just restore appdata
+                const result = await apiCall('/api/restore/appdata', 'POST', {
+                    backup_source: currentAppdataRestoreFile,
+                    folder: '',
+                    mode: 'appdata_only'
+                });
+                
+                if (result?.success) {
+                    alert('Appdata restored successfully');
+                } else {
+                    alert(`Restore failed: ${result?.error || 'Unknown error'}`);
+                }
+            }
+        }
+        
+        async function loadContainerMetadata() {
+            const result = await apiCall('/api/container-metadata');
+            const section = document.getElementById('containerRestoreSection');
+            const tbody = document.getElementById('containerMetadataTable');
+            
+            if (!result?.containers?.length) {
+                // Hide the entire section if no container metadata
+                section.style.display = 'none';
+                return;
+            }
+            
+            // Show section and populate table
+            section.style.display = 'block';
+            tbody.innerHTML = result.containers.map(c => `
+                <tr>
+                    <td><i class="bi bi-box me-1"></i>${escapeHtml(c.container_name)}</td>
+                    <td><code class="small">${escapeHtml(c.image || 'Unknown')}</code></td>
+                    <td>${escapeHtml(c.appdata_folder || '—')}</td>
+                    <td>${c.template ? '<i class="bi bi-check-circle text-success"></i>' : '<i class="bi bi-x-circle text-muted"></i>'}</td>
+                    <td>
+                        <div class="btn-group btn-group-sm">
+                            ${c.appdata_folder ? `<button class="btn btn-outline-secondary" onclick="restoreContainer('${escapeHtml(c.appdata_folder)}','appdata_only')" data-bs-toggle="tooltip" title="Restore appdata only"><i class="bi bi-folder"></i></button>` : ''}
+                            ${c.image ? `<button class="btn btn-outline-primary" onclick="restoreContainer('${escapeHtml(c.appdata_folder)}','pull_image')" data-bs-toggle="tooltip" title="Pull image + restore appdata"><i class="bi bi-cloud-download"></i></button>` : ''}
+                            ${c.image ? `<button class="btn btn-outline-success" onclick="pullImage('${escapeHtml(c.image)}')" data-bs-toggle="tooltip" title="Pull image only"><i class="bi bi-download"></i></button>` : ''}
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+            
+            // Initialize tooltips on new elements
+            document.querySelectorAll('#containerMetadataTable [data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+        }
+        
+        async function restoreContainer(folder, mode) {
+            const modeLabels = {
+                'appdata_only': 'Restore appdata only',
+                'pull_image': 'Pull image and restore appdata',
+                'full_restore': 'Full restore (stop container, pull, restore)'
+            };
+            
+            if (!confirm(`${modeLabels[mode]} for ${folder}?`)) return;
+            
+            // Find latest backup source
+            const backups = await apiCall('/api/backups');
+            let backupSource = '';
+            
+            // Check for incremental snapshots first
+            if (backups?.appdata?.length) {
+                for (const b of backups.appdata) {
+                    if (b.path?.includes('snapshots')) {
+                        backupSource = b.path;
+                        break;
+                    }
+                }
+                // Fall back to tar archive
+                if (!backupSource) {
+                    backupSource = backups.appdata[0].path || backups.appdata[0].name;
+                }
+            }
+            
+            if (!backupSource) {
+                alert('No appdata backup found');
+                return;
+            }
+            
+            const result = await apiCall('/api/restore/appdata', 'POST', {
+                backup_source: backupSource,
+                folder: folder,
+                mode: mode
+            });
+            
+            if (result?.success) {
+                alert(`Restore completed for ${folder}`);
+            } else {
+                alert(`Restore failed: ${result?.error || 'Unknown error'}`);
+            }
+        }
+        
+        async function pullImage(image) {
+            if (!confirm(`Pull image: ${image}?`)) return;
+            
+            const btn = event.target.closest('button');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+            btn.disabled = true;
+            
+            const result = await apiCall('/api/restore/pull-image', 'POST', { image: image });
+            
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+            
+            if (result?.success) {
+                alert(`Image pulled successfully: ${image}`);
+            } else {
+                alert(`Pull failed: ${result?.error || 'Unknown error'}`);
+            }
         }
         
         async function refreshLog() {

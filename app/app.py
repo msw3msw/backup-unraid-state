@@ -23,6 +23,12 @@ LOG_FILE = "/config/backup.log"
 SCHEDULE_FILE = "/config/schedule.json"
 STATS_FILE = "/config/stats.json"
 
+# Path configuration (from environment or defaults)
+BACKUP_BASE = os.environ.get('BACKUP_BASE', '/backup')
+APPDATA_PATH = os.environ.get('APPDATA_PATH', '/appdata')
+DOMAINS_PATH = os.environ.get('DOMAINS_PATH', '/domains')
+PLUGINS_PATH = os.environ.get('PLUGINS_PATH', '/plugins')
+
 # Progress tracking - thread-safe state for each backup type
 progress_state = {
     'vm': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False},
@@ -717,19 +723,6 @@ def api_restore_vm():
     
     return jsonify({"success": True, "message": f"VM restore started from: {backup_file}"})
 
-@app.route('/api/restore/appdata', methods=['POST'])
-def api_restore_appdata():
-    """Start appdata restore"""
-    data = request.json
-    backup_file = data.get('backup_file')
-    
-    if not backup_file:
-        return jsonify({"success": False, "error": "No backup file specified"})
-    
-    run_restore_async("appdata", backup_file)
-    
-    return jsonify({"success": True, "message": f"Appdata restore started from: {backup_file}"})
-
 @app.route('/api/restore/plugins', methods=['POST'])
 def api_restore_plugins():
     """Start plugins restore"""
@@ -785,6 +778,156 @@ def api_folders():
 def api_backups():
     """Get existing backups"""
     return jsonify(get_existing_backups())
+
+@app.route('/api/container-metadata')
+def api_container_metadata():
+    """Get saved container metadata for restore"""
+    metadata_dir = os.path.join(BACKUP_BASE, 'appdata', 'container_metadata')
+    containers = []
+    
+    if os.path.isdir(metadata_dir):
+        for filename in os.listdir(metadata_dir):
+            if filename.endswith('.json') and filename != 'container_mapping.json':
+                filepath = os.path.join(metadata_dir, filename)
+                try:
+                    with open(filepath, 'r') as f:
+                        data = json.load(f)
+                        containers.append({
+                            'container_name': data.get('container_name', ''),
+                            'image': data.get('image', ''),
+                            'appdata_folder': data.get('appdata_folder', ''),
+                            'template': data.get('unraid_template', ''),
+                            'state': data.get('state', '')
+                        })
+                except:
+                    pass
+    
+    return jsonify({'containers': containers})
+
+@app.route('/api/docker-xmls', methods=['GET', 'DELETE'])
+def api_docker_xmls():
+    """List or delete Docker template XMLs"""
+    templates_path = "/boot/config/plugins/dockerMan/templates-user"
+    
+    if request.method == 'DELETE':
+        data = request.get_json()
+        filename = data.get('filename', '')
+        
+        if not filename or '..' in filename or '/' in filename:
+            return jsonify({'success': False, 'error': 'Invalid filename'})
+        
+        filepath = os.path.join(templates_path, filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'File not found'})
+        
+        try:
+            os.remove(filepath)
+            log_message(f"Deleted Docker template: {filename}")
+            return jsonify({'success': True})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    # GET - List XMLs
+    xmls = []
+    
+    if not os.path.isdir(templates_path):
+        return jsonify({'xmls': []})
+    
+    # Get list of running containers
+    try:
+        result = subprocess.run(['docker', 'ps', '-a', '--format', '{{.Names}}'], 
+                                capture_output=True, text=True, timeout=10)
+        running_containers = set(result.stdout.strip().split('\n')) if result.returncode == 0 else set()
+    except:
+        running_containers = set()
+    
+    for filename in sorted(os.listdir(templates_path)):
+        if not filename.endswith('.xml'):
+            continue
+        
+        filepath = os.path.join(templates_path, filename)
+        
+        # Try to extract container name from XML
+        container_name = filename.replace('my-', '').replace('.xml', '')
+        
+        try:
+            with open(filepath, 'r') as f:
+                content = f.read()
+                # Look for <Name> tag
+                import re
+                match = re.search(r'<Name>([^<]+)</Name>', content, re.IGNORECASE)
+                if not match:
+                    match = re.search(r'<n>([^<]+)</n>', content, re.IGNORECASE)
+                if match:
+                    container_name = match.group(1)
+        except:
+            pass
+        
+        xmls.append({
+            'filename': filename,
+            'name': container_name,
+            'has_container': container_name in running_containers
+        })
+    
+    return jsonify({'xmls': xmls})
+
+@app.route('/api/restore/appdata', methods=['POST'])
+def api_restore_appdata():
+    """Restore appdata with options"""
+    data = request.get_json()
+    backup_source = data.get('backup_source', '')
+    folder = data.get('folder', '')
+    mode = data.get('mode', 'appdata_only')  # appdata_only, pull_image, full_restore
+    
+    if not backup_source:
+        return jsonify({'success': False, 'error': 'No backup source specified'})
+    
+    # Validate mode
+    if mode not in ['appdata_only', 'pull_image', 'full_restore']:
+        mode = 'appdata_only'
+    
+    try:
+        env = os.environ.copy()
+        env['BACKUP_BASE'] = BACKUP_BASE
+        env['APPDATA_PATH'] = APPDATA_PATH
+        
+        cmd = ['/app/backup.sh', 'restore_appdata', backup_source, folder, mode]
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        
+        if result.returncode == 0:
+            log_message(f"Restore completed: {folder or 'all'} ({mode})")
+            return jsonify({'success': True, 'output': result.stdout})
+        else:
+            log_message(f"Restore failed: {result.stderr}")
+            return jsonify({'success': False, 'error': result.stderr})
+            
+    except Exception as e:
+        log_message(f"Restore error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/restore/pull-image', methods=['POST'])
+def api_pull_image():
+    """Pull a Docker image"""
+    data = request.get_json()
+    image = data.get('image', '')
+    
+    if not image:
+        return jsonify({'success': False, 'error': 'No image specified'})
+    
+    try:
+        result = subprocess.run(['docker', 'pull', image], capture_output=True, text=True, timeout=600)
+        
+        if result.returncode == 0:
+            log_message(f"Image pulled: {image}")
+            return jsonify({'success': True, 'output': result.stdout})
+        else:
+            return jsonify({'success': False, 'error': result.stderr})
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'Pull timed out after 10 minutes'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/log')
 def api_log():

@@ -1,12 +1,13 @@
 #!/bin/bash
 
-# Backup Unraid State - Docker Edition v2.1
-# With folder-level progress and ETA calculations
+# Backup Unraid State - Docker Edition v2.2
+# With folder-level progress, container metadata, and restore support
 
 BACKUP_BASE="${BACKUP_BASE:-/backup}"
 VM_PATH="${VM_PATH:-/domains}"
 APPDATA_PATH="${APPDATA_PATH:-/appdata}"
 PLUGINS_PATH="${PLUGINS_PATH:-/plugins}"
+TEMPLATES_PATH="${TEMPLATES_PATH:-/boot/config/plugins/dockerMan/templates-user}"
 LOG_FILE="${LOG_FILE:-/config/backup.log}"
 MAX_BACKUPS="${MAX_BACKUPS:-2}"
 COMPRESSION_LEVEL="${COMPRESSION_LEVEL:-6}"
@@ -39,6 +40,110 @@ format_time() {
     else
         echo "${remain}s"
     fi
+}
+
+# ============== CONTAINER METADATA COLLECTION ==============
+collect_container_metadata() {
+    local METADATA_DIR="$1"
+    mkdir -p "$METADATA_DIR"
+    
+    log "Collecting container metadata..."
+    
+    # Get all container names
+    local CONTAINERS=$(docker ps -a --format '{{.Names}}' 2>/dev/null)
+    
+    if [ -z "$CONTAINERS" ]; then
+        log "No containers found or docker not accessible"
+        return 1
+    fi
+    
+    # Create master mapping file
+    local MAPPING_FILE="$METADATA_DIR/container_mapping.json"
+    echo '{"containers":[' > "$MAPPING_FILE"
+    local FIRST=true
+    
+    for CONTAINER in $CONTAINERS; do
+        # Get container inspect data
+        local INSPECT=$(docker inspect "$CONTAINER" 2>/dev/null)
+        [ -z "$INSPECT" ] && continue
+        
+        # Extract key info
+        local IMAGE=$(echo "$INSPECT" | jq -r '.[0].Config.Image // empty')
+        local STATE=$(echo "$INSPECT" | jq -r '.[0].State.Status // empty')
+        
+        # Find appdata folder by checking volume mounts
+        local APPDATA_FOLDER=""
+        local VOLUMES=$(echo "$INSPECT" | jq -r '.[0].Mounts[]? | select(.Destination == "/config" or .Destination == "/data") | .Source' 2>/dev/null)
+        
+        for VOL in $VOLUMES; do
+            if [[ "$VOL" == */appdata/* ]]; then
+                APPDATA_FOLDER=$(basename "$(dirname "$VOL")" 2>/dev/null)
+                [ "$APPDATA_FOLDER" == "appdata" ] && APPDATA_FOLDER=$(basename "$VOL")
+                break
+            fi
+        done
+        
+        # Also try matching container name to appdata folder
+        if [ -z "$APPDATA_FOLDER" ] && [ -d "$APPDATA_PATH/$CONTAINER" ]; then
+            APPDATA_FOLDER="$CONTAINER"
+        fi
+        
+        # Check for Unraid template
+        local TEMPLATE_FILE=""
+        local TEMPLATE_NAME=""
+        for tmpl in "$TEMPLATES_PATH"/*.xml; do
+            [ ! -f "$tmpl" ] && continue
+            if grep -q "<Name>$CONTAINER</Name>" "$tmpl" 2>/dev/null || \
+               grep -q ">$CONTAINER<" "$tmpl" 2>/dev/null; then
+                TEMPLATE_FILE="$tmpl"
+                TEMPLATE_NAME=$(basename "$tmpl")
+                break
+            fi
+        done
+        
+        # Save individual container metadata
+        local CONTAINER_FILE="$METADATA_DIR/${CONTAINER}.json"
+        cat > "$CONTAINER_FILE" << EOF
+{
+    "container_name": "$CONTAINER",
+    "image": "$IMAGE",
+    "state": "$STATE",
+    "appdata_folder": "$APPDATA_FOLDER",
+    "unraid_template": "$TEMPLATE_NAME",
+    "inspect": $INSPECT
+}
+EOF
+        
+        # Copy Unraid template if exists
+        if [ -n "$TEMPLATE_FILE" ] && [ -f "$TEMPLATE_FILE" ]; then
+            cp "$TEMPLATE_FILE" "$METADATA_DIR/templates/" 2>/dev/null || {
+                mkdir -p "$METADATA_DIR/templates"
+                cp "$TEMPLATE_FILE" "$METADATA_DIR/templates/"
+            }
+        fi
+        
+        # Add to mapping file
+        [ "$FIRST" != "true" ] && echo ',' >> "$MAPPING_FILE"
+        FIRST=false
+        cat >> "$MAPPING_FILE" << EOF
+{
+    "name": "$CONTAINER",
+    "image": "$IMAGE",
+    "appdata_folder": "$APPDATA_FOLDER",
+    "template": "$TEMPLATE_NAME"
+}
+EOF
+        
+        log "  - $CONTAINER -> $APPDATA_FOLDER (image: $IMAGE)"
+    done
+    
+    echo ']}' >> "$MAPPING_FILE"
+    
+    # Count what we collected
+    local COUNT=$(echo "$CONTAINERS" | wc -w)
+    log "Collected metadata for $COUNT containers"
+    
+    return 0
 }
 
 # Calculate ETA: calc_eta elapsed_secs done_units total_units
@@ -403,6 +508,11 @@ EOF
         done
     fi
     
+    # Collect container metadata for restore support
+    ELAPSED=$(($(date +%s) - START_TIME))
+    progress 99 "Collecting container metadata" "elapsed:$(format_time $ELAPSED)"
+    collect_container_metadata "$BACKUP_BASE/appdata/container_metadata"
+    
     DURATION=$(($(date +%s) - START_TIME))
     progress 100 "Complete in $(format_time $DURATION)" ""
     log "Appdata backup completed in $(format_time $DURATION)"
@@ -590,14 +700,130 @@ restore_vm() {
     log "VM restore complete"
 }
 
+# Enhanced appdata restore with options
+# Usage: restore_appdata <backup_file_or_dir> <folder> <mode>
+# Modes: appdata_only, pull_image, full_restore
 restore_appdata() {
-    local BACKUP_FILE="$1"
-    log "Starting appdata restore from: $BACKUP_FILE"
-    [ ! -f "$BACKUP_FILE" ] && log "ERROR: File not found" && return 1
+    local BACKUP_SOURCE="$1"
+    local FOLDER="${2:-}"
+    local MODE="${3:-appdata_only}"
     
-    log "Extracting to: $APPDATA_PATH"
-    tar -xzf "$BACKUP_FILE" -C "$APPDATA_PATH"
+    log "Starting appdata restore"
+    log "Source: $BACKUP_SOURCE"
+    log "Folder: ${FOLDER:-all}"
+    log "Mode: $MODE"
+    
+    # Handle metadata directory for image/container info
+    local METADATA_DIR="$BACKUP_BASE/appdata/container_metadata"
+    
+    # If restoring specific folder with image pull or full restore
+    if [ -n "$FOLDER" ] && [ "$MODE" != "appdata_only" ]; then
+        local CONTAINER_META="$METADATA_DIR/${FOLDER}.json"
+        
+        if [ ! -f "$CONTAINER_META" ]; then
+            # Try to match by container name
+            for meta in "$METADATA_DIR"/*.json; do
+                [ ! -f "$meta" ] && continue
+                local appdata_folder=$(jq -r '.appdata_folder // empty' "$meta" 2>/dev/null)
+                if [ "$appdata_folder" == "$FOLDER" ]; then
+                    CONTAINER_META="$meta"
+                    break
+                fi
+            done
+        fi
+        
+        if [ -f "$CONTAINER_META" ]; then
+            local IMAGE=$(jq -r '.image // empty' "$CONTAINER_META")
+            local CONTAINER_NAME=$(jq -r '.container_name // empty' "$CONTAINER_META")
+            local TEMPLATE=$(jq -r '.unraid_template // empty' "$CONTAINER_META")
+            
+            log "Found container metadata:"
+            log "  Container: $CONTAINER_NAME"
+            log "  Image: $IMAGE"
+            log "  Template: $TEMPLATE"
+            
+            # Pull image if requested
+            if [ "$MODE" == "pull_image" ] || [ "$MODE" == "full_restore" ]; then
+                if [ -n "$IMAGE" ]; then
+                    log "Pulling image: $IMAGE"
+                    docker pull "$IMAGE" 2>&1 | while read line; do log "  $line"; done
+                fi
+            fi
+            
+            # Full restore - stop container, restore appdata, optionally recreate
+            if [ "$MODE" == "full_restore" ]; then
+                # Stop container if running
+                if docker ps -q -f name="^${CONTAINER_NAME}$" | grep -q .; then
+                    log "Stopping container: $CONTAINER_NAME"
+                    docker stop "$CONTAINER_NAME" 2>/dev/null
+                fi
+            fi
+        else
+            log "Warning: No container metadata found for $FOLDER"
+        fi
+    fi
+    
+    # Restore appdata files
+    if [ -d "$BACKUP_SOURCE" ]; then
+        # It's a snapshot directory (incremental backup)
+        if [ -n "$FOLDER" ]; then
+            log "Restoring folder: $FOLDER from snapshot"
+            cp -a "$BACKUP_SOURCE/$FOLDER" "$APPDATA_PATH/" 2>/dev/null
+        else
+            log "Restoring all folders from snapshot"
+            cp -a "$BACKUP_SOURCE"/* "$APPDATA_PATH/" 2>/dev/null
+        fi
+    elif [ -f "$BACKUP_SOURCE" ]; then
+        # It's a tar archive
+        log "Extracting from archive to: $APPDATA_PATH"
+        if [ -n "$FOLDER" ]; then
+            tar -xzf "$BACKUP_SOURCE" -C "$APPDATA_PATH" "$FOLDER" 2>/dev/null
+        else
+            tar -xzf "$BACKUP_SOURCE" -C "$APPDATA_PATH"
+        fi
+    else
+        log "ERROR: Backup source not found: $BACKUP_SOURCE"
+        return 1
+    fi
+    
     log "Appdata restore complete"
+}
+
+# List available containers with their restore info
+list_container_metadata() {
+    local METADATA_DIR="$BACKUP_BASE/appdata/container_metadata"
+    
+    if [ ! -d "$METADATA_DIR" ]; then
+        echo "[]"
+        return
+    fi
+    
+    echo '['
+    local FIRST=true
+    for meta in "$METADATA_DIR"/*.json; do
+        [ ! -f "$meta" ] && continue
+        [ "$(basename "$meta")" == "container_mapping.json" ] && continue
+        
+        [ "$FIRST" != "true" ] && echo ','
+        FIRST=false
+        
+        local name=$(jq -r '.container_name // empty' "$meta")
+        local image=$(jq -r '.image // empty' "$meta")
+        local folder=$(jq -r '.appdata_folder // empty' "$meta")
+        local template=$(jq -r '.unraid_template // empty' "$meta")
+        local state=$(jq -r '.state // empty' "$meta")
+        
+        cat << EOF
+{
+    "container_name": "$name",
+    "image": "$image",
+    "appdata_folder": "$folder",
+    "template": "$template",
+    "state": "$state"
+}
+EOF
+    done
+    echo ']'
 }
 
 restore_plugins() {
@@ -617,7 +843,8 @@ case "$1" in
     backup_plugins) backup_plugins "$2" ;;
     backup_flash) backup_flash "$2" ;;
     restore_vm) restore_vm "$2" "$3" ;;
-    restore_appdata) restore_appdata "$2" ;;
+    restore_appdata) restore_appdata "$2" "$3" "$4" ;;
     restore_plugins) restore_plugins "$2" ;;
-    *) echo "Usage: $0 {backup_vm|backup_appdata|backup_plugins|backup_flash|restore_vm|restore_appdata|restore_plugins}" ;;
+    list_container_metadata) list_container_metadata ;;
+    *) echo "Usage: $0 {backup_vm|backup_appdata|backup_plugins|backup_flash|restore_vm|restore_appdata|restore_plugins|list_container_metadata}" ;;
 esac
