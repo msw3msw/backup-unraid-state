@@ -21,7 +21,7 @@ services:
       - /mnt/user/domains:/domains:ro
       - /mnt/user/appdata:/appdata:ro
       - /boot/config/plugins:/plugins:ro
-      - /boot:/boot:ro
+      - /boot:/boot:rw
       
       # Libvirt socket for VM control
       - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock

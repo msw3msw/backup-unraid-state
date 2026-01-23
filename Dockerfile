@@ -5,7 +5,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="Michael"
 LABEL description="Backup Unraid State - VM, appdata, and plugin backups with container restore"
-LABEL version="2.2.0"
+LABEL version="2.3.0"
 
 # Install system dependencies including Docker CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \

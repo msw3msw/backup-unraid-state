@@ -197,6 +197,12 @@
         .xml-item .xml-status { font-size: 0.75rem; }
         .xml-item .xml-status.active { color: var(--success); }
         .xml-item .xml-status.orphan { color: var(--warning); }
+        .xml-item .form-check-input { 
+            width: 1.2em; height: 1.2em; margin-top: 0; cursor: pointer; 
+            background-color: var(--bg-card); border: 2px solid #666;
+        }
+        .xml-item .form-check-input:checked { background-color: var(--primary); border-color: var(--primary); }
+        .xml-item .form-check-input:disabled { opacity: 0.2; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -438,9 +444,12 @@
                         <div class="settings-section">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <h6 class="mb-0"><i class="bi bi-file-earmark-code me-2"></i>Docker Templates (XMLs)</h6>
-                                <button class="btn btn-outline-secondary btn-sm" onclick="loadDockerXmls()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+                                <div>
+                                    <button class="btn btn-outline-danger btn-sm me-2" id="deleteSelectedXmlsBtn" onclick="deleteSelectedXmls()" style="display: none;"><i class="bi bi-trash me-1"></i>Delete Selected</button>
+                                    <button class="btn btn-outline-secondary btn-sm" onclick="loadDockerXmls()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+                                </div>
                             </div>
-                            <p class="text-muted small mb-2">Manage container templates on flash drive. Delete orphaned XMLs from removed containers.</p>
+                            <p class="text-muted small mb-2">Manage container templates on flash drive. <span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Detection may not be 100% accurate - verify before deleting.</span></p>
                             <div class="xml-list" id="dockerXmlList"><p class="text-muted small">Click refresh to load...</p></div>
                         </div>
                     </div>
@@ -748,29 +757,61 @@
             
             if (!result?.xmls?.length) {
                 listEl.innerHTML = '<p class="text-muted small p-3 m-0">No Docker templates found</p>';
+                document.getElementById('deleteSelectedXmlsBtn').style.display = 'none';
                 return;
             }
             
             listEl.innerHTML = result.xmls.map(xml => `
                 <div class="xml-item">
-                    <div>
+                    <div class="d-flex align-items-center">
+                        <input type="checkbox" class="form-check-input me-2 xml-checkbox" 
+                               data-filename="${escapeHtml(xml.filename)}" 
+                               ${xml.has_container ? 'disabled' : ''}
+                               onchange="updateDeleteButton()">
                         <span class="xml-name"><i class="bi bi-file-earmark-code me-2"></i>${escapeHtml(xml.name)}</span>
                         <span class="xml-status ${xml.has_container ? 'active' : 'orphan'} ms-2">
                             ${xml.has_container ? '<i class="bi bi-check-circle"></i> Active' : '<i class="bi bi-exclamation-triangle"></i> No container'}
                         </span>
                     </div>
-                    <button class="btn btn-outline-danger btn-sm" onclick="deleteDockerXml('${escapeHtml(xml.filename)}')" ${xml.has_container ? 'disabled data-bs-toggle="tooltip" title="Cannot delete - container exists"' : 'data-bs-toggle="tooltip" title="Delete orphaned template"'}>
-                        <i class="bi bi-trash"></i>
-                    </button>
                 </div>
             `).join('');
             
-            // Initialize tooltips
-            document.querySelectorAll('#dockerXmlList [data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+            updateDeleteButton();
+        }
+        
+        function updateDeleteButton() {
+            const checked = document.querySelectorAll('.xml-checkbox:checked').length;
+            const btn = document.getElementById('deleteSelectedXmlsBtn');
+            if (checked > 0) {
+                btn.style.display = 'inline-block';
+                btn.innerHTML = `<i class="bi bi-trash me-1"></i>Delete Selected (${checked})`;
+            } else {
+                btn.style.display = 'none';
+            }
+        }
+        
+        async function deleteSelectedXmls() {
+            const checkboxes = document.querySelectorAll('.xml-checkbox:checked');
+            const filenames = Array.from(checkboxes).map(cb => cb.dataset.filename);
+            
+            if (filenames.length === 0) return;
+            
+            if (!confirm(`Delete ${filenames.length} template(s)?\n\n⚠️ VERIFY these templates are truly orphaned before deleting.\nDetection may not be 100% accurate.\n\nThis will permanently remove them from your flash drive.`)) return;
+            
+            const result = await apiCall('/api/docker-xmls', 'DELETE', { filenames: filenames });
+            
+            if (result?.success) {
+                const msg = result.deleted?.length ? `Deleted: ${result.deleted.length}` : '';
+                const errMsg = result.errors?.length ? `\nErrors: ${result.errors.join(', ')}` : '';
+                alert(msg + errMsg || 'Done');
+                loadDockerXmls();
+            } else {
+                alert(`Failed: ${result?.error || 'Unknown error'}`);
+            }
         }
         
         async function deleteDockerXml(filename) {
-            if (!confirm(`Delete template: ${filename}?\n\nThis will remove the XML from your flash drive.`)) return;
+            if (!confirm(`Delete template: ${filename}?\n\n⚠️ VERIFY this template is truly orphaned before deleting.\nDetection may not be 100% accurate.\n\nThis will permanently remove it from your flash drive.`)) return;
             
             const result = await apiCall('/api/docker-xmls', 'DELETE', { filename: filename });
             

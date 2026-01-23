@@ -11,12 +11,12 @@ A modern, clean web interface for backing up your Unraid server's critical data 
 - **VM Backups** - Full virtual machine disk images with stop or live backup options, automatic compression
 - **Appdata Backups** - All Docker container data with smart exclusions (cache, logs, temp files) or selective folder backup
 - **Plugin Backups** - Complete plugin configurations from /boot/config/plugins
-- **Flash Drive Backups** - Critical disaster recovery backup including array config, network settings, user accounts, shares, SSL certs, Docker templates, and license key
+- **Flash Drive Backups** - Critical disaster recovery backup including array config, network settings, user accounts, shares, SSL certs, and license key
 
 ### Real-Time Progress Tracking
 
 - **Folder-by-folder progress** - See exactly which folder is being backed up: `plex (5/27)`
-- **Elapsed time** - All backups show running time: `plex (5/27) • 2m 30s`
+- **Elapsed time** - VM and Appdata show running time: `plex (5/27) • 2m 30s`
 - **Progress bars** - Visual progress indicator on each backup card
 - **Card-scoped logs** - Each backup card has its own activity log (no context switching)
 - **Server-Sent Events (SSE)** - Live updates without polling
@@ -37,28 +37,19 @@ A modern, clean web interface for backing up your Unraid server's critical data 
 - VM path translation for Docker container compatibility
 - **Container metadata saving** - images, ports, volumes saved during backup
 
-### Container Restore (v2.2)
+### Container Restore (NEW in v2.2)
 
 During appdata backup, container metadata is automatically saved:
 - Docker image name (e.g., `lscr.io/linuxserver/plex:latest`)
 - Container configuration (ports, volumes, environment)
-- Unraid templates (copied to backup)
+- Unraid templates (if available)
 
-**Restore options when clicking Restore on appdata backup:**
-1. **Restore appdata only** - Just extract the backup files
-2. **Restore appdata + pull all images** - Extract backup AND pull all container images from saved metadata (for disaster recovery)
+**Restore options:**
+1. **Appdata only** - Just restore the appdata folder
+2. **Pull + Restore** - Pull fresh image, then restore appdata
+3. **Pull image only** - Just update the image
 
-**Individual container restore** (when metadata exists):
-- 📁 Restore appdata only for specific container
-- ☁️ Pull image + restore appdata
-- ⬇️ Pull image only
-
-### Docker Template (XML) Management
-
-In the **Settings** tab, manage your Docker container templates:
-- View all templates on your flash drive
-- See which templates have active containers (green) vs orphaned (orange)
-- Delete orphaned XMLs from removed containers to keep flash drive clean
+This makes disaster recovery much easier - you can restore containers even on a fresh Unraid install.
 
 ### Incremental Backups (Appdata)
 
@@ -133,7 +124,7 @@ services:
       - /mnt/user/domains:/domains:ro
       - /mnt/user/appdata:/appdata:ro
       - /boot/config/plugins:/plugins:ro
-      - /boot:/boot:ro
+      - /boot:/boot:rw
       - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -164,9 +155,9 @@ services:
 | `/domains` | `/mnt/user/domains` | RO | VM disk images |
 | `/appdata` | `/mnt/user/appdata` | RO | Docker container data |
 | `/plugins` | `/boot/config/plugins` | RO | Plugin configs |
-| `/boot` | `/boot` | RW | USB flash drive (RW for XML management) |
+| `/boot` | `/boot` | RW | USB flash drive (RW required for XML management) |
 | `/var/run/libvirt/libvirt-sock` | `/var/run/libvirt/libvirt-sock` | RW | VM control socket |
-| `/var/run/docker.sock` | `/var/run/docker.sock` | RW | Container management & metadata |
+| `/var/run/docker.sock` | `/var/run/docker.sock` | RW | Container management |
 
 ## Environment Variables
 
@@ -183,15 +174,12 @@ services:
 
 ⚠️ **Privileged Mode**: Required for VM control and accessing system paths
 
-⚠️ **Docker Socket**: Required for container metadata collection and image pulling
-
 💾 **Disaster Recovery**: Flash backups contain everything needed to rebuild your Unraid configuration on a new USB drive:
 - Array configuration (disk assignments, parity)
 - Network settings
 - User accounts & passwords
 - Share definitions
-- Docker container templates (XMLs)
-- VM settings
+- Docker & VM settings
 - SSL certificates
 - License key
 
@@ -214,17 +202,6 @@ Log:
   [16/27] Backing up: plex
 ```
 
-### Restore Tab
-- Container Restore section (when metadata exists)
-- Individual restore buttons for each container
-- Full backup restore with modal options
-
-### Settings Tab
-- General settings (max backups, naming scheme)
-- Backup behaviour (compression, verify, incremental)
-- Exclude folders
-- Docker Templates (XML) management
-
 ---
 
 ## Restore Instructions
@@ -236,20 +213,14 @@ Log:
 
 ### Appdata Restore
 
-**From Web UI (recommended):**
-1. Go to Restore tab
-2. Click Restore on your appdata backup
-3. Choose: "Restore appdata only" or "Restore appdata + pull all images"
-4. Click Restore
-
-**Manual - Full backup (tar):**
+**Full backup (tar):**
 1. Stop the Docker container
-2. Extract: `tar -xzf appdata_FULL_week03.tar.gz -C /mnt/user/appdata/`
+2. Extract the backup to `/mnt/user/appdata/`
 3. Start the container
 
-**Manual - Incremental backup (rsync snapshots):**
+**Incremental backup (rsync snapshots):**
 1. Stop the Docker container
-2. Copy: `cp -a /backup/appdata/snapshots/2025-01-17_0300/* /mnt/user/appdata/`
+2. Copy the snapshot folder: `cp -a /backup/appdata/snapshots/2025-01-17_0300/* /mnt/user/appdata/`
 3. Start the container
 
 (Each snapshot is complete - no need to restore a chain!)
@@ -265,12 +236,19 @@ Log:
 
 ## Changelog
 
+### v2.3
+- **Docker Template (XML) Management** - View and delete orphaned templates from Settings tab
+- **Bulk delete with checkboxes** - Select multiple orphaned XMLs to delete at once
+- **Improved container detection** - Multiple matching strategies (normalized names, partial match, appdata path)
+- **Warning disclaimers** - Detection may not be 100% accurate warnings before delete
+- **Brighter text** - Improved visibility for dates and sizes on Restore tab
+- **Boot mount changed to RW** - Required for XML deletion functionality
+
 ### v2.2
 - **Container restore modal** - Choose "appdata only" or "appdata + pull all images" when restoring
 - **Container metadata** - Saves image names, config during appdata backup
 - **Image pulling** - Pull images directly from Restore tab
-- **Docker XML management** - View/delete orphaned templates in Settings tab
-- **Brighter text** - Improved visibility for dates and sizes
+- **Unraid template backup** - Saves templates for full container recreation
 - **Docker socket support** - Container management from within the app
 
 ### v2.1
@@ -281,13 +259,27 @@ Log:
 
 ### v2.0
 - **Real-time folder progress** - See which folder is being backed up
+- **ETA countdown** - Estimated time remaining on backup button
 - **Progress bars** - Visual progress on each backup card
 - **Card-scoped logs** - Each backup type has its own log panel
 - **SSE streaming** - Live updates via Server-Sent Events
 - **Unraid template** - Easy one-command installation
 
-### v1.x
-- Initial releases with core backup functionality
+### v1.4
+- UI polish: symmetrical cards, green pulse animation on active backups
+- Elapsed time counter during backups
+
+### v1.3
+- Fully async page loading - instant page render
+
+### v1.2
+- VM path translation fix for Docker container compatibility
+
+### v1.1
+- Async backup list loading - no more slow page loads
+
+### v1.0
+- Initial release
 
 ---
 

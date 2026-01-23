@@ -8,13 +8,19 @@
     <Support>https://github.com/msw3msw/backup-unraid-state/issues</Support>
     <Project>https://github.com/msw3msw/backup-unraid-state</Project>
     <Overview>
-Backup Unraid State v2.2 - A modern web interface for backing up your Unraid server.
+Backup Unraid State v2.3 - A modern web interface for backing up your Unraid server.
 
 BACKUP TYPES:
 - VM backups (stop or live mode)
 - Appdata backups (all or selective folders)  
 - Plugin configuration backups
 - Flash drive backup (disaster recovery)
+
+NEW IN v2.3 - DOCKER TEMPLATE MANAGEMENT:
+- View all Docker templates (XMLs) on your flash drive
+- Detect orphaned templates (no matching container)
+- Bulk delete orphaned XMLs with checkboxes
+- Improved container detection with multiple matching strategies
 
 NEW IN v2.2 - CONTAINER RESTORE:
 - Saves container metadata during backup (image, ports, volumes)
@@ -45,7 +51,7 @@ Access the web UI at http://[IP]:[PORT:5050]/
     <DonateText>Support Development</DonateText>
     <DonateLink></DonateLink>
     <Requires></Requires>
-    <Description>Backup Unraid State v2.2 - Modern web interface for VM, appdata, plugin, and flash drive backups. NEW: Container restore with image pulling, metadata saving, and one-click recovery.</Description>
+    <Description>Backup Unraid State v2.3 - Modern web interface for VM, appdata, plugin, and flash drive backups. Features: Container restore, Docker template (XML) management, metadata saving, and one-click recovery.</Description>
     
     <!-- Web UI Port -->
     <Config 
@@ -121,8 +127,8 @@ Access the web UI at http://[IP]:[PORT:5050]/
         Name="Flash Drive Path" 
         Target="/boot" 
         Default="/boot" 
-        Mode="ro" 
-        Description="USB flash drive path for disaster recovery backup" 
+        Mode="rw" 
+        Description="USB flash drive path for backup and XML management (RW required)" 
         Type="Path" 
         Display="always" 
         Required="true" 

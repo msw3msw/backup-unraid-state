@@ -811,22 +811,41 @@ def api_docker_xmls():
     
     if request.method == 'DELETE':
         data = request.get_json()
-        filename = data.get('filename', '')
+        filenames = data.get('filenames', [])
         
-        if not filename or '..' in filename or '/' in filename:
-            return jsonify({'success': False, 'error': 'Invalid filename'})
+        # Support single filename for backward compatibility
+        if not filenames and data.get('filename'):
+            filenames = [data.get('filename')]
         
-        filepath = os.path.join(templates_path, filename)
+        if not filenames:
+            return jsonify({'success': False, 'error': 'No files specified'})
         
-        if not os.path.exists(filepath):
-            return jsonify({'success': False, 'error': 'File not found'})
+        deleted = []
+        errors = []
         
-        try:
-            os.remove(filepath)
-            log_message(f"Deleted Docker template: {filename}")
-            return jsonify({'success': True})
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)})
+        for filename in filenames:
+            if not filename or '..' in filename or '/' in filename:
+                errors.append(f"{filename}: Invalid filename")
+                continue
+            
+            filepath = os.path.join(templates_path, filename)
+            
+            if not os.path.exists(filepath):
+                errors.append(f"{filename}: File not found")
+                continue
+            
+            try:
+                os.remove(filepath)
+                log_message(f"Deleted Docker template: {filename}")
+                deleted.append(filename)
+            except Exception as e:
+                errors.append(f"{filename}: {str(e)}")
+        
+        return jsonify({
+            'success': len(deleted) > 0,
+            'deleted': deleted,
+            'errors': errors
+        })
     
     # GET - List XMLs
     xmls = []
@@ -834,13 +853,53 @@ def api_docker_xmls():
     if not os.path.isdir(templates_path):
         return jsonify({'xmls': []})
     
-    # Get list of running containers
+    # Get list of all containers (running and stopped)
     try:
         result = subprocess.run(['docker', 'ps', '-a', '--format', '{{.Names}}'], 
                                 capture_output=True, text=True, timeout=10)
-        running_containers = set(result.stdout.strip().split('\n')) if result.returncode == 0 else set()
+        container_names = result.stdout.strip().split('\n') if result.returncode == 0 else []
+        # Create normalized lookup (lowercase, no hyphens/underscores/numbers)
+        def normalize(name):
+            return name.lower().replace('-', '').replace('_', '').replace(' ', '')
+        
+        # Store both normalized and original names
+        container_lookup = {normalize(c): c for c in container_names if c}
+        container_list = [c for c in container_names if c]
     except:
-        running_containers = set()
+        container_lookup = {}
+        container_list = []
+    
+    def find_matching_container(template_name, appdata_path=None):
+        """Try to match template to a container using multiple strategies"""
+        norm_template = normalize(template_name)
+        
+        # Strategy 1: Exact normalized match
+        if norm_template in container_lookup:
+            return True
+        
+        # Strategy 2: Partial match - template name contains container name or vice versa
+        for container in container_list:
+            norm_container = normalize(container)
+            # Check if one contains the other (at least 4 chars to avoid false positives)
+            if len(norm_template) >= 4 and len(norm_container) >= 4:
+                if norm_template in norm_container or norm_container in norm_template:
+                    return True
+            # Also check original names for partial match
+            template_lower = template_name.lower()
+            container_lower = container.lower()
+            if len(template_lower) >= 4 and len(container_lower) >= 4:
+                if template_lower in container_lower or container_lower in template_lower:
+                    return True
+        
+        # Strategy 3: Match by appdata folder name
+        if appdata_path:
+            appdata_folder = appdata_path.rstrip('/').split('/')[-1].lower()
+            if len(appdata_folder) >= 3:
+                for container in container_list:
+                    if appdata_folder in container.lower() or container.lower() in appdata_folder:
+                        return True
+        
+        return False
     
     for filename in sorted(os.listdir(templates_path)):
         if not filename.endswith('.xml'):
@@ -848,29 +907,37 @@ def api_docker_xmls():
         
         filepath = os.path.join(templates_path, filename)
         
-        # Try to extract container name from XML
+        # Try to extract container name and appdata path from XML
         container_name = filename.replace('my-', '').replace('.xml', '')
+        appdata_path = None
         
         try:
             with open(filepath, 'r') as f:
                 content = f.read()
-                # Look for <Name> tag
                 import re
-                match = re.search(r'<Name>([^<]+)</Name>', content, re.IGNORECASE)
-                if not match:
-                    match = re.search(r'<n>([^<]+)</n>', content, re.IGNORECASE)
+                # Look for <n> tag (container name)
+                match = re.search(r'<n>([^<]+)</n>', content)
                 if match:
                     container_name = match.group(1)
+                
+                # Look for appdata path in volume mappings
+                appdata_match = re.search(r'/mnt/user/appdata/([^/<"\']+)', content)
+                if appdata_match:
+                    appdata_path = appdata_match.group(1)
         except:
             pass
+        
+        # Check if container exists using multiple matching strategies
+        has_container = find_matching_container(container_name, appdata_path)
         
         xmls.append({
             'filename': filename,
             'name': container_name,
-            'has_container': container_name in running_containers
+            'has_container': has_container
         })
     
     return jsonify({'xmls': xmls})
+
 
 @app.route('/api/restore/appdata', methods=['POST'])
 def api_restore_appdata():
