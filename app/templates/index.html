@@ -1059,6 +1059,16 @@
             const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
             tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el));
             
+            // Fix Bootstrap modal aria-hidden issue that prevents button clicks
+            const appdataModal = document.getElementById('appdataRestoreModal');
+            if (appdataModal) {
+                appdataModal.addEventListener('shown.bs.modal', function() {
+                    // Remove aria-hidden from modal and its children to fix click issues
+                    this.removeAttribute('aria-hidden');
+                    this.querySelectorAll('[aria-hidden]').forEach(el => el.removeAttribute('aria-hidden'));
+                });
+            }
+            
             loadVMs();
             loadFolders();
             loadStats();
