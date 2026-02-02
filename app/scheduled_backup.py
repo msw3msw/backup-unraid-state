@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Scheduled Backup Runner
+Scheduled Backup Runner v2.6.0
 Called by cron to run scheduled backups
+Supports: staging mode, all backup types
 """
 
 import json
@@ -11,6 +12,7 @@ from datetime import datetime
 
 CONFIG_DIR = "/config"
 SCHEDULE_FILE = f"{CONFIG_DIR}/schedule.json"
+SETTINGS_FILE = f"{CONFIG_DIR}/settings.json"
 LOG_FILE = f"{CONFIG_DIR}/backup.log"
 
 def log(message):
@@ -30,9 +32,20 @@ def load_schedule():
             return json.load(f)
     return {}
 
+def load_settings():
+    """Load general settings including staging mode"""
+    if os.path.exists(SETTINGS_FILE):
+        with open(SETTINGS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
 def run_backup(backup_type, **kwargs):
     """Run a backup"""
     script_path = "/app/backup.sh"
+    
+    # Load settings for staging mode
+    settings = load_settings()
+    staging_enabled = settings.get('staging_enabled', False)
     
     env = os.environ.copy()
     env["BACKUP_BASE"] = os.environ.get("BACKUP_BASE", "/backup")
@@ -41,6 +54,9 @@ def run_backup(backup_type, **kwargs):
     env["PLUGINS_PATH"] = os.environ.get("PLUGINS_PATH", "/plugins")
     env["MAX_BACKUPS"] = os.environ.get("MAX_BACKUPS", "2")
     env["LOG_FILE"] = LOG_FILE
+    
+    # Pass staging setting to backup.sh
+    env["STAGING_ENABLED"] = "1" if staging_enabled else "0"
     
     try:
         if backup_type == "vm":
@@ -74,6 +90,8 @@ def run_backup(backup_type, **kwargs):
             return False
         
         log(f"Running: {' '.join(cmd)}")
+        if staging_enabled:
+            log("Staging mode: ENABLED (backup to local disk first)")
         
         result = subprocess.run(
             cmd,
@@ -120,29 +138,36 @@ def main():
         
         if vm_list:
             for vm in vm_list:
-                log(f"Starting scheduled VM backup: {vm}")
-                run_backup("vm", 
-                          vm_name=vm,
-                          handling=vm_handling,
-                          compress=vm_compress,
-                          naming_scheme=naming_scheme)
+                if vm and vm.strip():  # Skip empty entries
+                    log(f"Starting scheduled VM backup: {vm}")
+                    run_backup("vm", 
+                              vm_name=vm,
+                              handling=vm_handling,
+                              compress=vm_compress,
+                              naming_scheme=naming_scheme)
         else:
             # If no specific VMs, try to get all VMs
-            log("No specific VMs configured, backing up all VMs")
+            log("No specific VMs configured, checking for VMs...")
             try:
                 result = subprocess.run(
                     ['virsh', 'list', '--all', '--name'],
                     capture_output=True, text=True, timeout=10
                 )
-                vms = [vm.strip() for vm in result.stdout.strip().split('\n') if vm.strip()]
-                
-                for vm in vms:
-                    log(f"Starting scheduled VM backup: {vm}")
-                    run_backup("vm",
-                              vm_name=vm,
-                              handling=vm_handling,
-                              compress=vm_compress,
-                              naming_scheme=naming_scheme)
+                if result.returncode == 0:
+                    vms = [vm.strip() for vm in result.stdout.strip().split('\n') if vm.strip()]
+                    
+                    if vms:
+                        for vm in vms:
+                            log(f"Starting scheduled VM backup: {vm}")
+                            run_backup("vm",
+                                      vm_name=vm,
+                                      handling=vm_handling,
+                                      compress=vm_compress,
+                                      naming_scheme=naming_scheme)
+                    else:
+                        log("No VMs found on this system")
+                else:
+                    log("Unable to connect to libvirt/virsh")
             except Exception as e:
                 log(f"Error getting VM list: {e}")
     

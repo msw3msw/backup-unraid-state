@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Backup Unraid State - Docker Edition v2.0
-A clean web interface for backing up VMs, appdata, and plugins
-With real-time progress via Server-Sent Events (SSE)
+Backup Unraid State - Docker Edition v2.6.0
+Phase 2: Cancel support, better progress tracking
+Phase 3.5: Local staging mode
 """
 
 from flask import Flask, render_template, request, jsonify, Response
@@ -12,6 +12,7 @@ import json
 import threading
 import time
 import queue
+import signal
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -22,6 +23,7 @@ CONFIG_FILE = "/config/settings.json"
 LOG_FILE = "/config/backup.log"
 SCHEDULE_FILE = "/config/schedule.json"
 STATS_FILE = "/config/stats.json"
+PID_FILE = "/config/backup.pid"
 
 # Path configuration (from environment or defaults)
 BACKUP_BASE = os.environ.get('BACKUP_BASE', '/backup')
@@ -31,12 +33,21 @@ PLUGINS_PATH = os.environ.get('PLUGINS_PATH', '/plugins')
 
 # Progress tracking - thread-safe state for each backup type
 progress_state = {
-    'vm': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False},
-    'appdata': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False},
-    'plugins': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False},
-    'flash': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False}
+    'vm': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False, 'pid': None},
+    'appdata': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False, 'pid': None},
+    'plugins': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False, 'pid': None},
+    'flash': {'active': False, 'percent': 0, 'phase': '', 'eta': '', 'error': None, 'complete': False, 'pid': None}
 }
 progress_lock = threading.Lock()
+
+# Running process tracking for cancel support
+running_processes = {
+    'vm': None,
+    'appdata': None,
+    'plugins': None,
+    'flash': None
+}
+process_lock = threading.Lock()
 
 # Message queues for SSE streaming (one per backup type)
 progress_queues = {
@@ -87,7 +98,8 @@ def reset_progress(backup_type):
             'phase': 'Starting...', 
             'eta': 'Calculating...', 
             'error': None, 
-            'complete': False
+            'complete': False,
+            'pid': None
         }
 
 @app.route('/favicon.ico')
@@ -106,7 +118,8 @@ def load_config():
         "compression_level": 6,
         "verify_backups": True,
         "exclude_folders": [],
-        "incremental_enabled": False
+        "incremental_enabled": False,
+        "staging_enabled": False  # NEW: Local staging mode
     }
     
     if os.path.exists(CONFIG_FILE):
@@ -165,14 +178,21 @@ def update_stats(backup_type, size_bytes=0, success=True):
     stats = load_stats()
     now = datetime.now().isoformat()
     
+    # Format size for display
+    formatted_size = format_size(size_bytes)
+    
     if backup_type == "vm":
         stats["last_vm_backup"] = now
+        stats["last_vm_size"] = formatted_size
     elif backup_type == "appdata":
         stats["last_appdata_backup"] = now
+        stats["last_appdata_size"] = formatted_size
     elif backup_type == "plugins":
         stats["last_plugins_backup"] = now
+        stats["last_plugins_size"] = formatted_size
     elif backup_type == "flash":
         stats["last_flash_backup"] = now
+        stats["last_flash_size"] = formatted_size
     
     stats["backup_history"].append({
         "type": backup_type,
@@ -372,13 +392,15 @@ def get_appdata_folders():
         return []
 
 def get_existing_backups():
-    """Get list of existing backups"""
+    """Get list of existing backups (handles both TAR and RSYNC modes)"""
     config = load_config()
     backup_path = config.get("backup_destination", "/backup")
+    incremental = config.get("incremental_enabled", False)
     
     backups = {"vms": [], "appdata": [], "plugins": [], "flash": []}
     
-    def scan_dir(path, limit=5):
+    def scan_tar_dir(path, limit=5):
+        """Scan directory for .tar.gz files"""
         results = []
         try:
             if not os.path.exists(path):
@@ -396,7 +418,8 @@ def get_existing_backups():
                         "name": f,
                         "path": fpath,
                         "size": format_size(stat.st_size),
-                        "date": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+                        "date": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                        "mode": "tar"
                     })
                 except:
                     pass
@@ -404,15 +427,184 @@ def get_existing_backups():
             pass
         return results
     
+    def scan_rsync_snapshots(path, limit=5):
+        """Scan snapshots directory for RSYNC backups"""
+        results = []
+        try:
+            snapshots_dir = os.path.join(path, "snapshots")
+            if not os.path.exists(snapshots_dir):
+                return results
+            
+            # Get all snapshot directories
+            snapshots = []
+            for item in os.listdir(snapshots_dir):
+                item_path = os.path.join(snapshots_dir, item)
+                if os.path.isdir(item_path):
+                    try:
+                        stat = os.stat(item_path)
+                        snapshots.append({
+                            "name": item,
+                            "path": item_path,
+                            "mtime": stat.st_mtime
+                        })
+                    except:
+                        pass
+            
+            # Sort by modification time (newest first)
+            snapshots.sort(key=lambda x: x['mtime'], reverse=True)
+            
+            for snap in snapshots[:limit]:
+                total_size = 0
+                # Try to read size from .backup_size file (instant)
+                size_file = os.path.join(snap['path'], '.backup_size')
+                try:
+                    if os.path.exists(size_file):
+                        with open(size_file, 'r') as f:
+                            total_size = int(f.read().strip())
+                except:
+                    pass
+                
+                # Fallback to du if no size file (slower, but needed for old backups)
+                if total_size == 0:
+                    try:
+                        result = subprocess.run(
+                            ['du', '-sb', snap['path']], 
+                            capture_output=True, text=True, timeout=60
+                        )
+                        if result.returncode == 0:
+                            total_size = int(result.stdout.split()[0])
+                    except:
+                        pass
+                
+                results.append({
+                    "name": snap['name'],
+                    "path": snap['path'],
+                    "size": format_size(total_size) if total_size else "~",
+                    "date": datetime.fromtimestamp(snap['mtime']).strftime("%Y-%m-%d %H:%M"),
+                    "mode": "rsync"
+                })
+        except:
+            pass
+        return results
+    
     try:
-        backups["vms"] = scan_dir(os.path.join(backup_path, "vms"))
-        backups["appdata"] = scan_dir(os.path.join(backup_path, "appdata"))
-        backups["plugins"] = scan_dir(os.path.join(backup_path, "plugins"))
-        backups["flash"] = scan_dir(os.path.join(backup_path, "flash"))
+        # VMs - always TAR
+        backups["vms"] = scan_tar_dir(os.path.join(backup_path, "VMs"))
+        
+        # Plugins - always TAR
+        backups["plugins"] = scan_tar_dir(os.path.join(backup_path, "plugins"))
+        
+        # Flash - always TAR
+        backups["flash"] = scan_tar_dir(os.path.join(backup_path, "flash"))
+        
+        # Appdata - check both TAR and RSYNC directories
+        appdata_backups = []
+        
+        # Check TAR directories (backup_weekly_tar, backup_daily_tar, etc.)
+        for naming in ['weekly', 'daily', 'monthly']:
+            tar_path = os.path.join(backup_path, f"backup_{naming}_tar")
+            appdata_backups.extend(scan_tar_dir(tar_path))
+            
+            # Also check old format (backup_weekly without suffix)
+            old_path = os.path.join(backup_path, f"backup_{naming}")
+            if os.path.exists(old_path) and not os.path.exists(os.path.join(old_path, "snapshots")):
+                appdata_backups.extend(scan_tar_dir(old_path))
+        
+        # Check RSYNC directories (backup_weekly_rsync, etc.)
+        for naming in ['weekly', 'daily', 'monthly']:
+            rsync_path = os.path.join(backup_path, f"backup_{naming}_rsync")
+            appdata_backups.extend(scan_rsync_snapshots(rsync_path))
+            
+            # Also check old format with snapshots subdirectory
+            old_path = os.path.join(backup_path, f"backup_{naming}")
+            if os.path.exists(os.path.join(old_path, "snapshots")):
+                appdata_backups.extend(scan_rsync_snapshots(old_path))
+        
+        # Sort all appdata backups by date (newest first)
+        appdata_backups.sort(key=lambda x: x['date'], reverse=True)
+        backups["appdata"] = appdata_backups[:5]  # Keep top 5
+        
     except Exception as e:
         log_message(f"Error scanning backups: {e}")
     
     return backups
+
+def calculate_backup_size(backup_type, naming_scheme="weekly"):
+    """Calculate the size of the most recent backup"""
+    config = load_config()
+    backup_base = config.get("backup_destination", "/backup")
+    incremental = config.get("incremental_enabled", False)
+    
+    # Determine backup mode suffix
+    mode_suffix = "_rsync" if incremental else "_tar"
+    
+    total_size = 0
+    
+    try:
+        if backup_type == "vm":
+            vm_dir = os.path.join(backup_base, "VMs")
+            if os.path.exists(vm_dir):
+                # Get most recent VM backup
+                files = [f for f in os.listdir(vm_dir) if f.endswith('.tar.gz')]
+                if files:
+                    files.sort(reverse=True)
+                    latest = os.path.join(vm_dir, files[0])
+                    total_size = os.path.getsize(latest)
+        
+        elif backup_type == "appdata":
+            # Check both new format (with mode suffix) and old format
+            backup_dir_new = os.path.join(backup_base, f"backup_{naming_scheme}{mode_suffix}")
+            backup_dir_old = os.path.join(backup_base, f"backup_{naming_scheme}")
+            
+            # Prefer new format, fall back to old
+            backup_dir = backup_dir_new if os.path.exists(backup_dir_new) else backup_dir_old
+            
+            if incremental:
+                # RSYNC mode - check snapshots
+                snapshots_dir = os.path.join(backup_dir, "snapshots")
+                if os.path.exists(snapshots_dir):
+                    # Get most recent snapshot
+                    snapshots = [d for d in os.listdir(snapshots_dir) if os.path.isdir(os.path.join(snapshots_dir, d))]
+                    if snapshots:
+                        snapshots.sort(reverse=True)
+                        latest = os.path.join(snapshots_dir, snapshots[0])
+                        for root, dirs, files in os.walk(latest):
+                            for f in files:
+                                try:
+                                    total_size += os.path.getsize(os.path.join(root, f))
+                                except:
+                                    pass
+            else:
+                # TAR mode - check for .tar.gz
+                if os.path.exists(backup_dir):
+                    files = [f for f in os.listdir(backup_dir) if f.endswith('.tar.gz')]
+                    if files:
+                        files.sort(reverse=True)
+                        latest = os.path.join(backup_dir, files[0])
+                        total_size = os.path.getsize(latest)
+        
+        elif backup_type == "plugins":
+            plugins_dir = os.path.join(backup_base, "plugins")
+            if os.path.exists(plugins_dir):
+                files = [f for f in os.listdir(plugins_dir) if f.endswith('.tar.gz')]
+                if files:
+                    files.sort(reverse=True)
+                    latest = os.path.join(plugins_dir, files[0])
+                    total_size = os.path.getsize(latest)
+        
+        elif backup_type == "flash":
+            flash_dir = os.path.join(backup_base, "flash")
+            if os.path.exists(flash_dir):
+                files = [f for f in os.listdir(flash_dir) if f.endswith('.tar.gz')]
+                if files:
+                    files.sort(reverse=True)
+                    latest = os.path.join(flash_dir, files[0])
+                    total_size = os.path.getsize(latest)
+    
+    except Exception as e:
+        log_message(f"Error calculating backup size: {e}")
+    
+    return total_size
 
 def run_backup_async(backup_type, **kwargs):
     """Run backup in background thread with progress tracking"""
@@ -436,6 +628,7 @@ def run_backup_with_progress(backup_type, **kwargs):
     env["VERIFY_BACKUPS"] = "1" if config.get("verify_backups", True) else "0"
     env["EXCLUDE_FOLDERS"] = ",".join(config.get("exclude_folders", []))
     env["INCREMENTAL"] = "1" if config.get("incremental_enabled", False) else "0"
+    env["STAGING_ENABLED"] = "1" if config.get("staging_enabled", False) else "0"
     env["PROGRESS_ENABLED"] = "1"  # Tell script to output progress markers
     
     start_time = time.time()
@@ -488,6 +681,14 @@ def run_backup_with_progress(backup_type, **kwargs):
             bufsize=1
         )
         
+        # Store process reference for cancel support
+        with process_lock:
+            running_processes[backup_type] = process
+        
+        # Store PID in progress state
+        with progress_lock:
+            progress_state[backup_type]['pid'] = process.pid
+        
         # Read output line by line
         for line in process.stdout:
             line = line.strip()
@@ -506,11 +707,14 @@ def run_backup_with_progress(backup_type, **kwargs):
                     except ValueError:
                         pass
             else:
-                # Regular log line
-                log_message(line)
+                # Regular log line - just send to SSE (backup.sh already wrote to log file via tee)
                 update_progress(backup_type, log_line=line)
         
         process.wait()
+        
+        # Clear process reference
+        with process_lock:
+            running_processes[backup_type] = None
         
         elapsed = time.time() - start_time
         elapsed_str = f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
@@ -518,18 +722,34 @@ def run_backup_with_progress(backup_type, **kwargs):
         if process.returncode == 0:
             log_message(f"Backup completed successfully: {backup_type} in {elapsed_str}")
             update_progress(backup_type, percent=100, phase="Complete", eta="", complete=True, log_line=f"Completed in {elapsed_str}")
-            update_stats(backup_type, success=True)
+            
+            # Calculate backup size
+            naming = kwargs.get("naming_scheme", "weekly")
+            backup_size = calculate_backup_size(backup_type, naming)
+            log_message(f"Backup size: {format_size(backup_size)}")
+            
+            update_stats(backup_type, size_bytes=backup_size, success=True)
             return True
         else:
-            log_message(f"Backup failed with code {process.returncode}")
+            # Check if it was cancelled
+            if process.returncode == 1:
+                # Could be cancel or error - check log
+                log_message(f"Backup ended with code {process.returncode}")
+            else:
+                log_message(f"Backup failed with code {process.returncode}")
             update_progress(backup_type, error=f"Failed (code {process.returncode})", complete=True, log_line=f"Failed with code {process.returncode}")
-            update_stats(backup_type, success=False)
+            update_stats(backup_type, size_bytes=0, success=False)
             return False
             
     except Exception as e:
         log_message(f"Backup error: {e}")
         update_progress(backup_type, error=str(e), complete=True, log_line=f"Error: {e}")
         update_stats(backup_type, success=False)
+        
+        # Clear process reference on error
+        with process_lock:
+            running_processes[backup_type] = None
+        
         return False
 
 # ============== ROUTES ==============
@@ -603,6 +823,45 @@ def api_backup_status(backup_type):
     
     with progress_lock:
         return jsonify(progress_state[backup_type].copy())
+
+@app.route('/api/backup/cancel/<backup_type>', methods=['POST'])
+def api_backup_cancel(backup_type):
+    """Cancel a running backup"""
+    if backup_type not in progress_state:
+        return jsonify({"success": False, "error": "Invalid backup type"}), 400
+    
+    with progress_lock:
+        if not progress_state[backup_type]['active']:
+            return jsonify({"success": False, "error": "No backup running"})
+    
+    # Try to get the process
+    with process_lock:
+        process = running_processes.get(backup_type)
+    
+    if process is None:
+        # Try to read PID from file as fallback
+        try:
+            if os.path.exists(PID_FILE):
+                with open(PID_FILE, 'r') as f:
+                    pid = int(f.read().strip())
+                    os.kill(pid, signal.SIGTERM)
+                    log_message(f"Sent SIGTERM to backup process (PID: {pid})")
+                    update_progress(backup_type, phase="Cancelling...", log_line="Cancel requested - cleaning up...")
+                    return jsonify({"success": True, "message": "Cancel signal sent"})
+        except Exception as e:
+            log_message(f"Error reading PID file: {e}")
+        
+        return jsonify({"success": False, "error": "Could not find backup process"})
+    
+    try:
+        # Send SIGTERM for graceful shutdown
+        process.send_signal(signal.SIGTERM)
+        log_message(f"Cancel requested for {backup_type} backup")
+        update_progress(backup_type, phase="Cancelling...", log_line="Cancel requested - cleaning up...")
+        return jsonify({"success": True, "message": "Cancel signal sent"})
+    except Exception as e:
+        log_message(f"Error cancelling backup: {e}")
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/backup/vm', methods=['POST'])
 def api_backup_vm():
@@ -736,42 +995,14 @@ def api_restore_plugins():
     
     return jsonify({"success": True, "message": f"Plugins restore started from: {backup_file}"})
 
-@app.route('/api/stats')
-def api_stats():
-    """Get dashboard statistics"""
-    stats = load_stats()
-    stats["next_scheduled"] = get_next_scheduled_run()
-    stats["total_backup_size_formatted"] = format_size(stats.get("total_backup_size", 0))
-    return jsonify(stats)
-
-@app.route('/api/schedule', methods=['GET', 'POST'])
-def api_schedule():
-    """Get or update schedule"""
-    if request.method == 'GET':
-        return jsonify(load_schedule())
-    
-    data = request.json
-    save_schedule(data)
-    return jsonify({"success": True, "message": "Schedule saved"})
-
-@app.route('/api/settings', methods=['GET', 'POST'])
-def api_settings():
-    """Get or update settings"""
-    if request.method == 'GET':
-        return jsonify(load_config())
-    
-    data = request.json
-    save_config(data)
-    return jsonify({"success": True, "message": "Settings saved"})
-
 @app.route('/api/vms')
 def api_vms():
-    """Get VM list"""
+    """Get list of VMs"""
     return jsonify(get_vms())
 
 @app.route('/api/folders')
 def api_folders():
-    """Get appdata folders"""
+    """Get list of appdata folders"""
     return jsonify(get_appdata_folders())
 
 @app.route('/api/backups')
@@ -779,13 +1010,201 @@ def api_backups():
     """Get existing backups"""
     return jsonify(get_existing_backups())
 
+@app.route('/api/backups/<backup_type>')
+def api_backups_by_type(backup_type):
+    """Get backups for a specific type (for progressive loading)"""
+    config = load_config()
+    backup_path = config.get("backup_destination", "/backup")
+    
+    def scan_tar_dir(path, limit=5):
+        results = []
+        try:
+            if not os.path.exists(path):
+                return results
+            files = os.listdir(path)
+            backup_files = [f for f in files if f.endswith(('.tar', '.tar.gz'))]
+            backup_files.sort(reverse=True)
+            for f in backup_files[:limit]:
+                fpath = os.path.join(path, f)
+                try:
+                    stat = os.stat(fpath)
+                    results.append({
+                        "name": f, "path": fpath,
+                        "size": format_size(stat.st_size),
+                        "date": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                        "mode": "tar"
+                    })
+                except: pass
+        except: pass
+        return results
+    
+    def scan_rsync_fast(path, limit=5):
+        results = []
+        try:
+            snapshots_dir = os.path.join(path, "snapshots")
+            if not os.path.exists(snapshots_dir):
+                return results
+            snapshots = []
+            for item in os.listdir(snapshots_dir):
+                item_path = os.path.join(snapshots_dir, item)
+                if os.path.isdir(item_path):
+                    try:
+                        stat = os.stat(item_path)
+                        snapshots.append({"name": item, "path": item_path, "mtime": stat.st_mtime})
+                    except: pass
+            snapshots.sort(key=lambda x: x['mtime'], reverse=True)
+            for snap in snapshots[:limit]:
+                total_size = 0
+                # Try to read size from .backup_size file (instant)
+                size_file = os.path.join(snap['path'], '.backup_size')
+                try:
+                    if os.path.exists(size_file):
+                        with open(size_file, 'r') as f:
+                            total_size = int(f.read().strip())
+                except: pass
+                
+                # Fallback to du if no size file (slower, but needed for old backups)
+                if total_size == 0:
+                    try:
+                        result = subprocess.run(['du', '-sb', snap['path']], capture_output=True, text=True, timeout=60)
+                        total_size = int(result.stdout.split()[0]) if result.returncode == 0 else 0
+                    except: pass
+                
+                results.append({
+                    "name": snap['name'], "path": snap['path'],
+                    "size": format_size(total_size) if total_size else "~",
+                    "date": datetime.fromtimestamp(snap['mtime']).strftime("%Y-%m-%d %H:%M"),
+                    "mode": "rsync"
+                })
+        except: pass
+        return results
+    
+    try:
+        if backup_type == 'vms':
+            return jsonify(scan_tar_dir(os.path.join(backup_path, "VMs")))
+        elif backup_type == 'plugins':
+            return jsonify(scan_tar_dir(os.path.join(backup_path, "plugins")))
+        elif backup_type == 'flash':
+            return jsonify(scan_tar_dir(os.path.join(backup_path, "flash")))
+        elif backup_type == 'appdata':
+            appdata_backups = []
+            for naming in ['weekly', 'daily', 'monthly']:
+                appdata_backups.extend(scan_tar_dir(os.path.join(backup_path, f"backup_{naming}_tar")))
+                old_path = os.path.join(backup_path, f"backup_{naming}")
+                if os.path.exists(old_path) and not os.path.exists(os.path.join(old_path, "snapshots")):
+                    appdata_backups.extend(scan_tar_dir(old_path))
+                appdata_backups.extend(scan_rsync_fast(os.path.join(backup_path, f"backup_{naming}_rsync")))
+                if os.path.exists(os.path.join(old_path, "snapshots")):
+                    appdata_backups.extend(scan_rsync_fast(old_path))
+            appdata_backups.sort(key=lambda x: x['date'], reverse=True)
+            return jsonify(appdata_backups[:5])
+        else:
+            return jsonify([])
+    except Exception as e:
+        log_message(f"Error scanning {backup_type}: {e}")
+        return jsonify([])
+
+@app.route('/api/server-time')
+def api_server_time():
+    """Get current server time"""
+    return jsonify({
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "timezone": os.environ.get('TZ', 'UTC')
+    })
+
+@app.route('/api/stats')
+def api_stats():
+    """Get backup statistics"""
+    stats = load_stats()
+    stats["next_scheduled"] = get_next_scheduled_run()
+    return jsonify(stats)
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+def api_settings():
+    """Get or update settings"""
+    if request.method == 'POST':
+        data = request.json
+        config = load_config()
+        
+        # Update allowed settings
+        for key in ['max_backups', 'naming_scheme', 'compression_level', 
+                    'verify_backups', 'exclude_folders', 'incremental_enabled',
+                    'staging_enabled']:  # NEW: staging_enabled
+            if key in data:
+                config[key] = data[key]
+        
+        save_config(config)
+        return jsonify({"success": True})
+    
+    return jsonify(load_config())
+
+@app.route('/api/schedule', methods=['GET', 'POST'])
+def api_schedule():
+    """Get or update schedule"""
+    if request.method == 'POST':
+        data = request.json
+        schedule = load_schedule()
+        schedule.update(data)
+        save_schedule(schedule)
+        return jsonify({"success": True})
+    
+    return jsonify(load_schedule())
+
+@app.route('/api/validate-backup')
+def api_validate_backup():
+    """Validate backup destination is accessible"""
+    config = load_config()
+    backup_dest = config.get("backup_destination", "/backup")
+    issues = []
+    
+    # Check if backup path exists
+    if not os.path.exists(backup_dest):
+        issues.append(f"Backup destination does not exist: {backup_dest}")
+    elif not os.path.isdir(backup_dest):
+        issues.append(f"Backup destination is not a directory: {backup_dest}")
+    else:
+        # Check if writable
+        test_file = os.path.join(backup_dest, ".write_test")
+        try:
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+        except Exception as e:
+            issues.append(f"Backup destination not writable: {e}")
+    
+    # Get free space
+    try:
+        stat = os.statvfs(backup_dest)
+        free_bytes = stat.f_bavail * stat.f_frsize
+        free_gb = free_bytes / (1024**3)
+        
+        if free_gb < 1:
+            issues.append(f"Low disk space: {free_gb:.1f}GB free")
+    except:
+        pass
+    
+    return jsonify({
+        "valid": len(issues) == 0,
+        "issues": issues,
+        "path": backup_dest,
+        "free_space": f"{free_gb:.1f}GB" if 'free_gb' in dir() else "Unknown"
+    })
+
 @app.route('/api/container-metadata')
 def api_container_metadata():
-    """Get saved container metadata for restore"""
-    metadata_dir = os.path.join(BACKUP_BASE, 'appdata', 'container_metadata')
+    """Get saved container metadata from backups"""
+    config = load_config()
+    backup_base = config.get("backup_destination", "/backup")
+    
     containers = []
     
-    if os.path.isdir(metadata_dir):
+    # Search all backup directories for container metadata
+    for backup_dir in Path(backup_base).glob("backup_*/container_metadata"):
+        if not backup_dir.is_dir():
+            continue
+        
+        metadata_dir = str(backup_dir)
         for filename in os.listdir(metadata_dir):
             if filename.endswith('.json') and filename != 'container_mapping.json':
                 filepath = os.path.join(metadata_dir, filename)
@@ -869,7 +1288,7 @@ def api_docker_xmls():
         container_lookup = {}
         container_list = []
     
-    def find_matching_container(template_name, appdata_path=None):
+    def find_matching_container(template_name, appdata_path=None, filename=""):
         """Try to match template to a container using multiple strategies"""
         norm_template = normalize(template_name)
         
@@ -924,11 +1343,14 @@ def api_docker_xmls():
                 appdata_match = re.search(r'/mnt/user/appdata/([^/<"\']+)', content)
                 if appdata_match:
                     appdata_path = appdata_match.group(1)
-        except:
+                
+                print(f"DEBUG XML: file='{filename}' container_name='{container_name}' appdata='{appdata_path}'")
+        except Exception as e:
+            print(f"DEBUG XML ERROR: file='{filename}' error={str(e)}")
             pass
         
         # Check if container exists using multiple matching strategies
-        has_container = find_matching_container(container_name, appdata_path)
+        has_container = find_matching_container(container_name, appdata_path, filename)
         
         xmls.append({
             'filename': filename,
@@ -1009,5 +1431,5 @@ def api_log():
     return jsonify({"log": []})
 
 if __name__ == '__main__':
-    log_message("Backup Unraid State Docker starting...")
+    log_message("Backup Unraid State Docker v2.6.0 starting...")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

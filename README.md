@@ -16,10 +16,21 @@ A modern, clean web interface for backing up your Unraid server's critical data 
 ### Real-Time Progress Tracking
 
 - **Folder-by-folder progress** - See exactly which folder is being backed up: `plex (5/27)`
-- **Elapsed time** - VM and Appdata show running time: `plex (5/27) • 2m 30s`
+- **Speed-based ETA** - Accurate remaining time calculated from actual transfer speed: `2m 15s @ 1.8MB/s`
 - **Progress bars** - Visual progress indicator on each backup card
 - **Card-scoped logs** - Each backup card has its own activity log (no context switching)
 - **Server-Sent Events (SSE)** - Live updates without polling
+- **Cancel button** - Stop any backup mid-process safely (NEW in v2.6)
+
+### Local Staging Mode (NEW in v2.6)
+
+Dramatically faster backups by writing to local disk first:
+
+- **3-5x faster** - Backup to local SSD, then transfer to NAS
+- **TAR mode**: 20min → 7min (65% faster)
+- **RSYNC first run**: 10min → 4min (60% faster)
+- **RSYNC subsequent**: 2min → 1min (50% faster)
+- Enable in Settings → "Use local staging"
 
 ### Scheduling & Automation
 
@@ -37,7 +48,7 @@ A modern, clean web interface for backing up your Unraid server's critical data 
 - VM path translation for Docker container compatibility
 - **Container metadata saving** - images, ports, volumes saved during backup
 
-### Container Restore (NEW in v2.2)
+### Container Restore
 
 During appdata backup, container metadata is automatically saved:
 - Docker image name (e.g., `lscr.io/linuxserver/plex:latest`)
@@ -60,12 +71,13 @@ When enabled in Settings, appdata backups use **rsync with hardlinks**:
 - **Easy restore** - just copy any snapshot folder, no chain to reconstruct
 - **Storage efficient** - only changed files use additional space
 - **Safe** - deleting old backups doesn't affect newer ones
+- **Week-based naming** - Snapshots named `week05` instead of timestamps (v2.6+)
 
 ```
-/backup/appdata/snapshots/
-├── 2025-01-15_0300/   ← Complete (50GB apparent, 50GB actual)
-├── 2025-01-16_0300/   ← Complete (50GB apparent, 2GB actual - hardlinks!)
-└── 2025-01-17_0300/   ← Complete (50GB apparent, 1GB actual)
+/backup/backup_weekly_rsync/snapshots/
+├── week03/   ← Complete (50GB apparent, 50GB actual)
+├── week04/   ← Complete (50GB apparent, 2GB actual - hardlinks!)
+└── week05/   ← Complete (50GB apparent, 1GB actual)
 
 Total: 53GB actual disk usage for 3 complete backups
 ```
@@ -77,6 +89,7 @@ Total: 53GB actual disk usage for 3 complete backups
 - Green border/glow animation on active backups
 - Instant page loading (fully async)
 - Mobile responsive design
+- Progressive restore tab loading (each card loads independently)
 
 ---
 
@@ -190,16 +203,18 @@ services:
 ### Backup Now Tab
 - 2x2 grid of backup cards (VM, Appdata, Plugins, Flash)
 - Each card shows: controls, progress bar, activity log
-- Real-time progress on buttons during backup
+- Real-time progress with current folder and ETA
 
 ### Progress Example
 ```
-Button: [⏳ plex (5/27) • 2m 30s]
-Progress: ████████████░░░░░░░░ 58%
+Button: [⏹ Cancel Backup]
+Current: binhex-plexpass (11/16)
+Progress: ████████████░░░░░░░░ 68%
+ETA: 2m 15s @ 1.8MB/s
+
 Log:
-  [14/27] Backing up: radarr
-  [15/27] Backing up: sonarr
-  [16/27] Backing up: plex
+  [11/16] Backing up: binhex-plexpass
+  [12/16] Backing up: radarr
 ```
 
 ---
@@ -220,7 +235,7 @@ Log:
 
 **Incremental backup (rsync snapshots):**
 1. Stop the Docker container
-2. Copy the snapshot folder: `cp -a /backup/appdata/snapshots/2025-01-17_0300/* /mnt/user/appdata/`
+2. Copy the snapshot folder: `cp -a /backup/backup_weekly_rsync/snapshots/week05/* /mnt/user/appdata/`
 3. Start the container
 
 (Each snapshot is complete - no need to restore a chain!)
@@ -235,6 +250,28 @@ Log:
 ---
 
 ## Changelog
+
+### v2.6.0
+- **Cancel button** - Stop any backup mid-process safely with graceful cleanup
+- **Local staging mode** - 3-5x faster backups by writing to local disk first, then transferring to NAS
+- **Better ETA** - Accurate time remaining based on actual bytes/sec transfer speed
+- **Current folder display** - Shows folder being processed above progress bar: `binhex-plexpass (11/16)`
+- **RSYNC week naming** - Snapshots now use `week05` format instead of `2026-02-01_0803` timestamps
+- **Progressive restore loading** - Each backup card loads independently for faster UI
+- **Staging toggle** - Enable/disable in Settings tab
+- **Speed display** - Shows transfer rate: `2m 15s @ 1.8MB/s`
+- **Server time on Schedule tab** - Shows live server time for accurate scheduling
+- **Card header status** - Shows last backup date and size on each card
+- **Stats bar redesign** - Shows schedule status, next run time, and scheduled items
+- **Bug fix** - Fixed tar/gzip file naming that caused flash and plugins backups to fail
+- **Bug fix** - Replaced `bc` with `awk` for format_bytes (bc not installed in container)
+- **Bug fix** - Fixed double logging (every line appearing twice)
+- **Bug fix** - Fixed staging transfer failure across filesystems (mv → rsync)
+- **Bug fix** - Fixed backup retention not respecting MAX_BACKUPS setting
+
+### v2.5
+- **Scheduled backup improvements** - Better cron handling and error recovery
+- **Bug fixes** - Various stability improvements
 
 ### v2.3
 - **Docker Template (XML) Management** - View and delete orphaned templates from Settings tab

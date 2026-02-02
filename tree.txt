@@ -1,0 +1,16 @@
+.
+├── ./Dockerfile
+├── ./LICENSE
+├── ./README.md
+├── ./app
+│   ├── ./app/app.py
+│   ├── ./app/backup.sh
+│   ├── ./app/scheduled_backup.py
+│   └── ./app/templates
+│       └── ./app/templates/index.html
+├── ./docker-compose.yml
+├── ./icon.png
+├── ./tree.txt
+└── ./unraid-template.xml
+
+3 directories, 11 files
